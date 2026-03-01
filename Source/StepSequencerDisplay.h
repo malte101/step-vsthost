@@ -47,7 +47,7 @@ public:
 
     void paint(juce::Graphics& g) override
     {
-        g.fillAll(juce::Colour(0xff1f1f1f));
+        g.fillAll(juce::Colour(0xfff3f7fc));
 
         const auto toolbar = getToolbarBounds();
         drawToolbar(g, toolbar);
@@ -521,7 +521,7 @@ private:
 
     void drawToolbar(juce::Graphics& g, juce::Rectangle<float> toolbar)
     {
-        g.setColour(juce::Colour(0xff202226));
+        g.setColour(juce::Colour(0xffe7edf5));
         g.fillRect(toolbar);
 
         const auto layout = getToolbarLayout();
@@ -533,11 +533,11 @@ private:
             const bool active = (tool == activeTool);
             const auto rect = layout.toolButtons[i];
 
-            g.setColour(active ? juce::Colour(0xff4c698d) : juce::Colour(0xff31353a));
+            g.setColour(active ? juce::Colour(0xff7199c7) : juce::Colour(0xfff5f8fc));
             g.fillRoundedRectangle(rect, 3.0f);
-            g.setColour(active ? juce::Colour(0xff98c6ff) : juce::Colour(0xff4b5158));
+            g.setColour(active ? juce::Colour(0xff5f86b4) : juce::Colour(0xffb7c5d5));
             g.drawRoundedRectangle(rect, 3.0f, 1.0f);
-            g.setColour(active ? juce::Colour(0xfff2f6ff) : juce::Colour(0xffc1c7cf));
+            g.setColour(active ? juce::Colour(0xfff7fbff) : juce::Colour(0xff4a5c72));
             g.setFont(11.0f);
             g.drawText(labels[i], rect.toNearestInt(), juce::Justification::centred, false);
         }
@@ -599,7 +599,7 @@ private:
         const bool hasPlayStep = isPlaying && totalSteps > 0;
         const int playStep = hasPlayStep ? juce::jlimit(0, totalSteps - 1, currentStep) : -1;
 
-        g.setColour(juce::Colour(0xff24272c));
+        g.setColour(juce::Colour(0xffeaf0f7));
         g.fillRect(grid);
 
         for (int i = 0; i < totalSteps; ++i)
@@ -624,10 +624,10 @@ private:
 
             if (!isEnabled)
             {
-                g.setColour(juce::Colour(0xff141414).withAlpha(0.55f));
+                g.setColour(juce::Colour(0xff8fa1b6).withAlpha(0.55f));
                 g.drawRect(stepRect, 1.0f);
 
-                g.setColour(juce::Colour(0xffa8a8a8).withAlpha(0.34f));
+                g.setColour(juce::Colour(0xff6c7f95).withAlpha(0.58f));
                 g.setFont(stepHeight < 18.0f ? 8.0f : 10.0f);
                 g.drawText(juce::String(i + 1), stepRect.toNearestInt(), juce::Justification::centred, false);
 
@@ -656,7 +656,7 @@ private:
             g.setColour(stepColor);
             g.fillRect(stepRect);
 
-            g.setColour(juce::Colour(0xff141414));
+            g.setColour(juce::Colour(0xff8fa1b6));
             g.drawRect(stepRect, 1.0f);
 
             auto track = juce::Rectangle<float>(stepRect.getX() + 1.0f,
@@ -721,11 +721,11 @@ private:
                     .withMultipliedBrightness(1.28f)
                     .interpolatedWith(juce::Colour(0xfff4f8ff), 0.12f);
                 const auto rampDark = stripColor
-                    .interpolatedWith(juce::Colour(0xff11161d), 0.35f)
-                    .withMultipliedBrightness(0.74f);
+                    .interpolatedWith(juce::Colour(0xffced8e5), 0.35f)
+                    .withMultipliedBrightness(0.90f);
                 const float rampAlpha = 0.90f;
                 const auto profileLine = juce::Colour(0xfff7fbff).withAlpha(0.72f);
-                const auto clearedTopArea = juce::Colour(0xff1f2125).withAlpha(0.96f);
+                const auto clearedTopArea = juce::Colour(0xfff2f6fb).withAlpha(0.96f);
                 const auto velocityAreaRect = juce::Rectangle<float>(stepRect.getX() + 1.0f,
                                                                      barAreaTop,
                                                                      juce::jmax(1.0f, stepRect.getWidth() - 2.0f),
@@ -768,7 +768,7 @@ private:
                 g.drawRect(stepRect.reduced(1.0f), 2.0f);
             }
 
-            g.setColour(juce::Colour(0xffa8a8a8));
+            g.setColour(juce::Colour(0xff4a5c72));
             g.setFont(stepHeight < 18.0f ? 8.0f : 10.0f);
             g.drawText(juce::String(i + 1), stepRect.toNearestInt(), juce::Justification::centred, false);
 
@@ -798,7 +798,7 @@ private:
             }
         }
 
-        g.setColour(juce::Colour(0xff4f4f4f));
+        g.setColour(juce::Colour(0xff9fb0c4));
         for (int col = 4; col < stepsPerRow; col += 4)
         {
             const float x = grid.getX() + (col * stepWidth);
@@ -807,7 +807,7 @@ private:
 
         if (numRows > 1)
         {
-            g.setColour(juce::Colour(0xff1a1a1a));
+            g.setColour(juce::Colour(0xffc7d2e0));
             for (int row = 1; row < numRows; ++row)
             {
                 const float y = grid.getY() + (row * stepHeight);

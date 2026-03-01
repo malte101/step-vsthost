@@ -10,15 +10,20 @@
 
 HostedInstrumentRack::HostedInstrumentRack()
 {
-    formatManager.addDefaultFormats();
+#if JUCE_PLUGINHOST_VST3
+    formatManager.addFormat(std::make_unique<juce::VST3PluginFormat>());
+#endif
+#if JUCE_PLUGINHOST_AU
+    formatManager.addFormat(std::make_unique<juce::AudioUnitPluginFormat>());
+#endif
 }
 
 bool HostedInstrumentRack::loadPlugin(const juce::File& file, double sampleRate, int blockSize, juce::String& error)
 {
     error.clear();
-    if (!file.existsAsFile())
+    if (!file.exists())
     {
-        error = "Plugin file not found";
+        error = "Plugin file not found: " + file.getFullPathName();
         return false;
     }
 
@@ -42,6 +47,7 @@ bool HostedInstrumentRack::loadPlugin(const juce::File& file, double sampleRate,
     instance = std::move(newInstance);
     currentSampleRate = sampleRate;
     currentBlockSize = blockSize;
+    instance->enableAllBuses();
     instance->prepareToPlay(sampleRate, blockSize);
     return true;
 }
@@ -68,4 +74,11 @@ void HostedInstrumentRack::processBlock(juce::AudioBuffer<float>& audio, juce::M
         return;
     }
     instance->processBlock(audio, midi);
+}
+
+int HostedInstrumentRack::getOutputChannelCount() const
+{
+    if (instance == nullptr)
+        return 0;
+    return juce::jmax(0, instance->getTotalNumOutputChannels());
 }

@@ -1,73 +1,109 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(step-vsthost VERSION 0.1.0 LANGUAGES C CXX)
+# Set C and C++ compilers (JUCE needs both)
+project(step_vsthost VERSION 2.0.0 LANGUAGES C CXX)
 
+# C++ Standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Licensing-sensitive optional model:
+# OFF by default so release binaries do not accidentally include Huovilainen code.
+option(MLRVST_ENABLE_HUOVILAINEN "Enable Huovilainen Moog model (LGPL-derived upstream)" OFF)
+option(MLRVST_ENABLE_SOUNDTOUCH "Enable SoundTouch-based swing time-stretch path" ON)
+
+# Export compile commands for IDE support
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Check if JUCE exists
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/JUCE/CMakeLists.txt")
-    message(FATAL_ERROR
+    message(FATAL_ERROR 
         "JUCE not found!\n"
-        "Clone JUCE into this repo before configuring:\n"
+        "Please clone JUCE:\n"
+        "  cd ${CMAKE_CURRENT_SOURCE_DIR}\n"
         "  git clone https://github.com/juce-framework/JUCE.git\n")
 endif()
 
-add_subdirectory(JUCE)
-
-set(STEP_VSTHOST_FORMATS VST3)
-set(STEP_VSTHOST_AU_ARGS)
-if(APPLE)
-    list(APPEND STEP_VSTHOST_FORMATS AU)
-    list(APPEND STEP_VSTHOST_AU_ARGS AU_MAIN_TYPE kAudioUnitType_MusicDevice)
+# JUCE 8 does not support MinGW on Windows targets.
+if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    message(FATAL_ERROR
+        "MinGW is not supported by JUCE 8 for this project.\n"
+        "Use Visual Studio (MSVC) or clang-cl with the Windows SDK.")
 endif()
 
+# Add JUCE
+add_subdirectory(JUCE)
+
+# Plugin formats by platform
+set(MLRVST_PLUGIN_FORMATS VST3)
+set(MLRVST_AU_MAIN_TYPE_ARGS)
+if(APPLE)
+    list(APPEND MLRVST_PLUGIN_FORMATS AU)
+    list(APPEND MLRVST_AU_MAIN_TYPE_ARGS AU_MAIN_TYPE kAudioUnitType_MusicEffect)
+endif()
+
+# Plugin configuration
 juce_add_plugin(step_vsthost
     COMPANY_NAME "step-vsthost"
-    IS_SYNTH TRUE
-    NEEDS_MIDI_INPUT FALSE
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     COPY_PLUGIN_AFTER_BUILD TRUE
-
-    PLUGIN_MANUFACTURER_CODE StpH
-    PLUGIN_CODE StVH
-
-    FORMATS ${STEP_VSTHOST_FORMATS}
+    
+    PLUGIN_MANUFACTURER_CODE Stph
+    PLUGIN_CODE Stvh
+    
+    FORMATS ${MLRVST_PLUGIN_FORMATS}
+    
     PRODUCT_NAME "step-vsthost"
-
-    VST3_CATEGORIES Instrument Synth
-    ${STEP_VSTHOST_AU_ARGS}
-
+    
+    VST3_CATEGORIES Fx Sampler
+    ${MLRVST_AU_MAIN_TYPE_ARGS}
+    
+    # Bundle identifiers for macOS
     BUNDLE_ID "com.stepvsthost.plugin"
-    DESCRIPTION "Step sequencer instrument host with Monome support"
-
-    PLUGIN_CHANNEL_CONFIGURATIONS {0, 2}
+    
+    # Description
+    DESCRIPTION "Modern mlr sample slicer with Monome support"
+    
+    # Plugin channel configurations
+    PLUGIN_CHANNEL_CONFIGURATIONS {2, 2}  # Stereo in, stereo out
+    
+    # Keep build outputs in the local artefacts directory.
+    # Install/copy to system plugin folders is a separate explicit step.
 )
 
+# Source files
 target_sources(step_vsthost
     PRIVATE
-        Source/StepHostProcessor.cpp
-        Source/StepHostProcessor.h
-        Source/StepHostEditor.cpp
-        Source/StepHostEditor.h
-        Source/StepSequencerEngine.cpp
-        Source/StepSequencerEngine.h
+        Source/PluginProcessor.cpp
+        Source/PluginProcessor.h
+        Source/PluginEditor.cpp
+        Source/PluginEditor.h
+        Source/AudioEngine.cpp
+        Source/AudioEngine.h
+        Source/PresetStore.cpp
+        Source/PresetStore.h
+        Source/MonomeController.cpp
+        Source/ArcController.cpp
+        Source/MonomeFilterActions.cpp
+        Source/MonomeFilterActions.h
+        Source/MonomeGroupAssignActions.cpp
+        Source/MonomeGroupAssignActions.h
+        Source/MonomeMixActions.cpp
+        Source/MonomeMixActions.h
+        Source/MonomeFileBrowserActions.cpp
+        Source/MonomeFileBrowserActions.h
         Source/HostedInstrumentRack.cpp
         Source/HostedInstrumentRack.h
-        Source/MonomeConnection.cpp
-        Source/MonomeConnection.h
-        Source/StepMonomeController.cpp
-        Source/StepMonomeController.h
-        Source/StepSampler.h
-        Source/StepSequencerDisplay.h
-        Source/PlayheadSpeedQuantizer.h
 )
 
+# Compile definitions
 target_compile_definitions(step_vsthost
-    PRIVATE
+    PUBLIC
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
@@ -75,12 +111,38 @@ target_compile_definitions(step_vsthost
         JUCE_MODAL_LOOPS_PERMITTED=1
         JUCE_STRICT_REFCOUNTEDPOINTER=1
         JUCE_PLUGINHOST_VST3=1
+        JUCE_PLUGINHOST_AU=1
 )
 
-if(APPLE)
-    target_compile_definitions(step_vsthost PRIVATE JUCE_PLUGINHOST_AU=1)
+if(MLRVST_ENABLE_HUOVILAINEN)
+    target_compile_definitions(step_vsthost PRIVATE MLRVST_ENABLE_HUOVILAINEN=1)
+else()
+    target_compile_definitions(step_vsthost PRIVATE MLRVST_ENABLE_HUOVILAINEN=0)
 endif()
 
+set(MLRVST_SOUNDTOUCH_ENABLED FALSE)
+if(MLRVST_ENABLE_SOUNDTOUCH)
+    find_path(MLRVST_SOUNDTOUCH_INCLUDE_DIR
+        NAMES soundtouch/SoundTouch.h
+        PATHS /opt/homebrew/include /usr/local/include)
+    find_library(MLRVST_SOUNDTOUCH_LIBRARY
+        NAMES SoundTouch soundtouch
+        PATHS /opt/homebrew/lib /usr/local/lib)
+
+    if(MLRVST_SOUNDTOUCH_INCLUDE_DIR AND MLRVST_SOUNDTOUCH_LIBRARY)
+        target_include_directories(step_vsthost SYSTEM PRIVATE "${MLRVST_SOUNDTOUCH_INCLUDE_DIR}")
+        target_link_libraries(step_vsthost PRIVATE "${MLRVST_SOUNDTOUCH_LIBRARY}")
+        target_compile_definitions(step_vsthost PRIVATE MLRVST_ENABLE_SOUNDTOUCH=1)
+        set(MLRVST_SOUNDTOUCH_ENABLED TRUE)
+    else()
+        message(WARNING "SoundTouch requested but not found; building with legacy swing path.")
+        target_compile_definitions(step_vsthost PRIVATE MLRVST_ENABLE_SOUNDTOUCH=0)
+    endif()
+else()
+    target_compile_definitions(step_vsthost PRIVATE MLRVST_ENABLE_SOUNDTOUCH=0)
+endif()
+
+# Link libraries
 target_link_libraries(step_vsthost
     PRIVATE
         juce::juce_audio_basics
@@ -102,7 +164,126 @@ target_link_libraries(step_vsthost
         juce::juce_recommended_warning_flags
 )
 
+# Platform-specific settings
+if(APPLE)
+    target_compile_definitions(step_vsthost PRIVATE JUCE_MAC=1)
+    
+    # Code signing (optional)
+    # set_target_properties(mlrVST_VST3 PROPERTIES
+    #     XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Developer ID Application"
+    #     XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "YOUR_TEAM_ID"
+    # )
+    
+elseif(WIN32)
+    target_compile_definitions(step_vsthost PRIVATE JUCE_WINDOWS=1)
+    
+elseif(UNIX)
+    target_compile_definitions(step_vsthost PRIVATE JUCE_LINUX=1)
+    
+    # Linux-specific packages
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(WEBKIT webkit2gtk-4.0)
+    pkg_check_modules(GTK gtk+-3.0)
+    
+    if(WEBKIT_FOUND)
+        target_link_libraries(step_vsthost PRIVATE ${WEBKIT_LIBRARIES})
+    endif()
+    
+    if(GTK_FOUND)
+        target_link_libraries(step_vsthost PRIVATE ${GTK_LIBRARIES})
+    endif()
+endif()
+
+# Optimization flags
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    if(MSVC)
+        target_compile_options(step_vsthost PRIVATE /O2 /GL)
+    else()
+        target_compile_options(step_vsthost PRIVATE -O3 -ffast-math)
+    endif()
+endif()
+
+# Debug flags
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(step_vsthost PRIVATE DEBUG=1 _DEBUG=1)
+    
+    if(NOT MSVC)
+        target_compile_options(step_vsthost PRIVATE -g -Wall -Wextra)
+    endif()
+endif()
+
+# Reduce known warning noise from JUCE + external DSP headers when building with Clang.
+# This does not change DSP/runtime behavior.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(step_vsthost PRIVATE
+        -Wno-nan-infinity-disabled
+    )
+endif()
+
+# Include directories
 target_include_directories(step_vsthost
     PRIVATE
         Source
 )
+
+# Third-party headers are treated as system includes to avoid surfacing
+# vendor warnings as project warnings.
+target_include_directories(step_vsthost
+    SYSTEM PRIVATE
+        third_party/MoogLadders-main/src
+)
+
+# Installation
+install(TARGETS step_vsthost
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin
+)
+
+if(APPLE)
+    set(MLRVST_MAC_INSTALL_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/install_macos_plugins.sh")
+    if(EXISTS "${MLRVST_MAC_INSTALL_SCRIPT}")
+        add_custom_target(install_plugins_user
+            COMMAND "${MLRVST_MAC_INSTALL_SCRIPT}" --user --build-dir "${CMAKE_BINARY_DIR}"
+            USES_TERMINAL
+            COMMENT "Install step-vsthost plugin bundles to user plugin folders")
+
+        add_custom_target(install_plugins_system
+            COMMAND "${MLRVST_MAC_INSTALL_SCRIPT}" --system --build-dir "${CMAKE_BINARY_DIR}"
+            USES_TERMINAL
+            COMMENT "Install step-vsthost plugin bundles to system plugin folders (sudo may prompt)")
+    endif()
+endif()
+
+# Print configuration
+message(STATUS "")
+message(STATUS "═══════════════════════════════════════════════════════")
+message(STATUS "step-vsthost v${PROJECT_VERSION} - Build Configuration")
+message(STATUS "═══════════════════════════════════════════════════════")
+message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "  C++ Standard: C++${CMAKE_CXX_STANDARD}")
+message(STATUS "  System: ${CMAKE_SYSTEM_NAME}")
+message(STATUS "  Huovilainen model: ${MLRVST_ENABLE_HUOVILAINEN}")
+message(STATUS "  SoundTouch swing path: ${MLRVST_SOUNDTOUCH_ENABLED}")
+message(STATUS "")
+message(STATUS "Plugin Formats:")
+message(STATUS "  ✓ VST3")
+if(APPLE)
+    message(STATUS "  ✓ AU (Audio Unit)")
+endif()
+message(STATUS "")
+if(APPLE)
+    message(STATUS "macOS build outputs:")
+    message(STATUS "  VST3: ${CMAKE_BINARY_DIR}/step_vsthost_artefacts/Release/VST3/step-vsthost.vst3")
+    message(STATUS "  AU:   ${CMAKE_BINARY_DIR}/step_vsthost_artefacts/Release/AU/step-vsthost.component")
+    message(STATUS "")
+    message(STATUS "To install plugin bundles:")
+    message(STATUS "  cmake --build ${CMAKE_BINARY_DIR} --target install_plugins_user")
+    message(STATUS "  cmake --build ${CMAKE_BINARY_DIR} --target install_plugins_system")
+    message(STATUS "  # or")
+    message(STATUS "  scripts/install_macos_plugins.sh --system --build-dir ${CMAKE_BINARY_DIR}")
+    message(STATUS "")
+    message(STATUS "Build artifacts will be in:")
+    message(STATUS "  ${CMAKE_BINARY_DIR}/step_vsthost_artefacts/")
+endif()
+message(STATUS "═══════════════════════════════════════════════════════")
+message(STATUS "")

@@ -20,6 +20,7 @@ public:
     void releaseResources();
 
     void processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi);
+    int getOutputChannelCount() const;
 
     juce::AudioPluginInstance* getInstance() const { return instance.get(); }
 
