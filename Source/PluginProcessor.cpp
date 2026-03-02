@@ -2,7 +2,7 @@
   ==============================================================================
 
     PluginProcessor.cpp
-    mlrVST - Modern Edition Implementation
+    step-vsthost - Modern Edition Implementation
 
   ==============================================================================
 */
@@ -11,7 +11,10 @@
 #include "PluginEditor.h"
 #include "PlayheadSpeedQuantizer.h"
 #include "PresetStore.h"
+#include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <functional>
 #include <limits>
 #include <utility>
 
@@ -44,45 +47,59 @@ BarSelection decodeBarSelection(int value)
     }
 }
 
-juce::String controlModeToKey(MlrVSTAudioProcessor::ControlMode mode)
+juce::String controlModeToKey(StepVstHostAudioProcessor::ControlMode mode)
 {
     switch (mode)
     {
-        case MlrVSTAudioProcessor::ControlMode::Speed: return "speed";
-        case MlrVSTAudioProcessor::ControlMode::Pitch: return "pitch";
-        case MlrVSTAudioProcessor::ControlMode::Pan: return "pan";
-        case MlrVSTAudioProcessor::ControlMode::Volume: return "volume";
-        case MlrVSTAudioProcessor::ControlMode::GrainSize: return "grainsize";
-        case MlrVSTAudioProcessor::ControlMode::Filter: return "filter";
-        case MlrVSTAudioProcessor::ControlMode::Swing: return "swing";
-        case MlrVSTAudioProcessor::ControlMode::Gate: return "gate";
-        case MlrVSTAudioProcessor::ControlMode::FileBrowser: return "browser";
-        case MlrVSTAudioProcessor::ControlMode::GroupAssign: return "group";
-        case MlrVSTAudioProcessor::ControlMode::Modulation: return "modulation";
-        case MlrVSTAudioProcessor::ControlMode::Preset: return "preset";
-        case MlrVSTAudioProcessor::ControlMode::StepEdit: return "stepedit";
-        case MlrVSTAudioProcessor::ControlMode::Normal:
+        case StepVstHostAudioProcessor::ControlMode::Speed: return "speed";
+        case StepVstHostAudioProcessor::ControlMode::Pitch: return "pitch";
+        case StepVstHostAudioProcessor::ControlMode::Pan: return "pan";
+        case StepVstHostAudioProcessor::ControlMode::Volume: return "volume";
+        case StepVstHostAudioProcessor::ControlMode::Length: return "length";
+        case StepVstHostAudioProcessor::ControlMode::Filter: return "filter";
+        case StepVstHostAudioProcessor::ControlMode::Swing: return "swing";
+        case StepVstHostAudioProcessor::ControlMode::Gate: return "gate";
+        case StepVstHostAudioProcessor::ControlMode::FileBrowser: return "browser";
+        case StepVstHostAudioProcessor::ControlMode::GroupAssign: return "group";
+        case StepVstHostAudioProcessor::ControlMode::Modulation: return "modulation";
+        case StepVstHostAudioProcessor::ControlMode::BeatSpace: return "beatspace";
+        case StepVstHostAudioProcessor::ControlMode::Preset: return "preset";
+        case StepVstHostAudioProcessor::ControlMode::StepEdit: return "stepedit";
+        case StepVstHostAudioProcessor::ControlMode::Normal:
         default: return "normal";
     }
 }
 
-bool controlModeFromKey(const juce::String& key, MlrVSTAudioProcessor::ControlMode& mode)
+bool controlModeFromKey(const juce::String& key, StepVstHostAudioProcessor::ControlMode& mode)
 {
     const auto normalized = key.trim().toLowerCase();
-    if (normalized == "speed") { mode = MlrVSTAudioProcessor::ControlMode::Speed; return true; }
-    if (normalized == "pitch") { mode = MlrVSTAudioProcessor::ControlMode::Pitch; return true; }
-    if (normalized == "pan") { mode = MlrVSTAudioProcessor::ControlMode::Pan; return true; }
-    if (normalized == "volume") { mode = MlrVSTAudioProcessor::ControlMode::Volume; return true; }
-    if (normalized == "grainsize" || normalized == "grain_size" || normalized == "grain") { mode = MlrVSTAudioProcessor::ControlMode::GrainSize; return true; }
-    if (normalized == "filter") { mode = MlrVSTAudioProcessor::ControlMode::Filter; return true; }
-    if (normalized == "swing") { mode = MlrVSTAudioProcessor::ControlMode::Swing; return true; }
-    if (normalized == "gate") { mode = MlrVSTAudioProcessor::ControlMode::Gate; return true; }
-    if (normalized == "browser") { mode = MlrVSTAudioProcessor::ControlMode::FileBrowser; return true; }
-    if (normalized == "group") { mode = MlrVSTAudioProcessor::ControlMode::GroupAssign; return true; }
-    if (normalized == "mod" || normalized == "modulation") { mode = MlrVSTAudioProcessor::ControlMode::Modulation; return true; }
-    if (normalized == "preset") { mode = MlrVSTAudioProcessor::ControlMode::Preset; return true; }
-    if (normalized == "stepedit" || normalized == "step_edit" || normalized == "step") { mode = MlrVSTAudioProcessor::ControlMode::StepEdit; return true; }
+    if (normalized == "speed") { mode = StepVstHostAudioProcessor::ControlMode::Speed; return true; }
+    if (normalized == "pitch") { mode = StepVstHostAudioProcessor::ControlMode::Pitch; return true; }
+    if (normalized == "pan") { mode = StepVstHostAudioProcessor::ControlMode::Pan; return true; }
+    if (normalized == "volume") { mode = StepVstHostAudioProcessor::ControlMode::Volume; return true; }
+    if (normalized == "length" || normalized == "len") { mode = StepVstHostAudioProcessor::ControlMode::Length; return true; }
+    if (normalized == "grainsize" || normalized == "grain_size" || normalized == "grain")
+    {
+        mode = StepVstHostAudioProcessor::ControlMode::Length; // legacy mapping
+        return true;
+    }
+    if (normalized == "filter") { mode = StepVstHostAudioProcessor::ControlMode::Filter; return true; }
+    if (normalized == "swing") { mode = StepVstHostAudioProcessor::ControlMode::Swing; return true; }
+    if (normalized == "gate") { mode = StepVstHostAudioProcessor::ControlMode::Gate; return true; }
+    if (normalized == "browser") { mode = StepVstHostAudioProcessor::ControlMode::FileBrowser; return true; }
+    if (normalized == "group") { mode = StepVstHostAudioProcessor::ControlMode::GroupAssign; return true; }
+    if (normalized == "mod" || normalized == "modulation") { mode = StepVstHostAudioProcessor::ControlMode::Modulation; return true; }
+    if (normalized == "beatspace" || normalized == "beat_space" || normalized == "beat") { mode = StepVstHostAudioProcessor::ControlMode::BeatSpace; return true; }
+    if (normalized == "preset") { mode = StepVstHostAudioProcessor::ControlMode::Preset; return true; }
+    if (normalized == "stepedit" || normalized == "step_edit" || normalized == "step") { mode = StepVstHostAudioProcessor::ControlMode::StepEdit; return true; }
     return false;
+}
+
+bool isLikelyMicrotonicPlugin(const juce::String& pluginName)
+{
+    const auto normalized = pluginName.toLowerCase();
+    return normalized.contains("microtonic")
+        || normalized.contains("sonic charge");
 }
 
 constexpr const char* kGlobalSettingsKey = "GlobalSettingsXml";
@@ -93,22 +110,22 @@ juce::File getGlobalSettingsFile()
         .getChildFile("Library")
         .getChildFile("Audio")
         .getChildFile("Presets")
-        .getChildFile("mlrVST")
-        .getChildFile("mlrVST");
+        .getChildFile("step-vsthost")
+        .getChildFile("step-vsthost");
     return presetsRoot.getChildFile("GlobalSettings.xml");
 }
 
 juce::File getLegacyGlobalSettingsFile()
 {
     return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-        .getChildFile("mlrVST")
+        .getChildFile("step-vsthost")
         .getChildFile("GlobalSettings.xml");
 }
 
 juce::PropertiesFile::Options getLegacySettingsOptions()
 {
     juce::PropertiesFile::Options options;
-    options.applicationName = "mlrVST";
+    options.applicationName = "step-vsthost";
     options.filenameSuffix = "settings";
     options.folderName = "";
     options.osxLibrarySubFolder = "Application Support";
@@ -190,6 +207,459 @@ constexpr std::array<const char*, 6> kPersistentGlobalControlParameterIds {
     "outputRouting",
     "soundTouchEnabled"
 };
+
+constexpr int kHostedCcVolume = 7;   // Channel Volume (MSB)
+constexpr int kHostedCcPan = 10;     // Pan (MSB)
+constexpr int kHostedCcPitch = 74;   // Brightness/timbre; mapped as pitch macro in hosted synth setups
+constexpr int kMicrotonicPatchOscAtkIndex = 2;
+constexpr int kMicrotonicPatchOscDcyIndex = 3;
+constexpr int kMicrotonicPatchNEnvAtkIndex = 12;
+constexpr int kMicrotonicPatchNEnvDcyIndex = 13;
+constexpr int kMicrotonicPatchOscFreqIndex = 1;
+constexpr int kMicrotonicPatchLevelIndex = 18;
+constexpr int kMicrotonicPatchPanIndex = 19;
+
+constexpr std::array<const char*, 25> kMicrotonicBeatSpacePatchParamOrder {
+    "OscWave", "OscFreq", "OscAtk", "OscDcy", "ModMode",
+    "ModRate", "ModAmt", "NFilMod", "NFilFrq", "NFilQ",
+    "NStereo", "NEnvMod", "NEnvAtk", "NEnvDcy", "Mix",
+    "DistAmt", "EQFreq", "EQGain", "Level", "Pan",
+    "Output", "Choke", "OscVel", "NVel", "ModVel"
+};
+
+constexpr std::array<const char*, StepVstHostAudioProcessor::BeatSpaceChannels> kBeatSpaceSpaceNames {
+    "Kick",
+    "Snare",
+    "Closed Hat",
+    "Open Hat",
+    "Percussion",
+    "Misc"
+};
+
+juce::String normalizeParameterToken(const juce::String& text)
+{
+    juce::String normalized;
+    normalized.preallocateBytes(text.getNumBytesAsUTF8() + 1);
+    for (int i = 0; i < text.length(); ++i)
+    {
+        const juce::juce_wchar c = text[i];
+        if (juce::CharacterFunctions::isLetterOrDigit(c))
+            normalized += juce::CharacterFunctions::toLowerCase(c);
+    }
+    return normalized;
+}
+
+struct NuXnnLayer
+{
+    using EvalFn = std::function<std::vector<float>(const std::vector<float>&)>;
+    EvalFn eval;
+    int outputSize = 0;
+    bool valid = false;
+};
+
+struct NuXnnModel
+{
+    juce::String name;
+    int inputSize = 0;
+    int outputSize = 0;
+    NuXnnLayer::EvalFn rootEval;
+    bool valid = false;
+};
+
+class NuXnnReader
+{
+public:
+    explicit NuXnnReader(const std::vector<uint8_t>& bytesIn) : bytes(bytesIn) {}
+
+    bool canRead(size_t count) const
+    {
+        return (offset + count) <= bytes.size();
+    }
+
+    uint8_t readByte()
+    {
+        if (!canRead(1))
+            return 0;
+        return bytes[offset++];
+    }
+
+    uint32_t readUInt32()
+    {
+        if (!canRead(4))
+            return 0;
+        const uint32_t v = static_cast<uint32_t>(bytes[offset])
+            | (static_cast<uint32_t>(bytes[offset + 1]) << 8u)
+            | (static_cast<uint32_t>(bytes[offset + 2]) << 16u)
+            | (static_cast<uint32_t>(bytes[offset + 3]) << 24u);
+        offset += 4;
+        return v;
+    }
+
+    static float decodeFloat16(uint16_t bits)
+    {
+        const int exponent = (bits >> 10) & 31;
+        const float sign = ((bits & 0x8000u) != 0u) ? -1.0f : 1.0f;
+        if (exponent != 0)
+        {
+            const float mantissa = static_cast<float>((bits & 0x03ffu) + 0x0400u);
+            return sign * mantissa * 2.9802322387695312e-8f
+                * static_cast<float>(1 << exponent);
+        }
+        return sign * static_cast<float>(bits & 0x03ffu) * 5.960464477539063e-8f;
+    }
+
+    float readFloat16()
+    {
+        if (!canRead(2))
+            return 0.0f;
+        const uint16_t bits = static_cast<uint16_t>(bytes[offset])
+            | static_cast<uint16_t>(static_cast<uint16_t>(bytes[offset + 1]) << 8u);
+        offset += 2;
+        return decodeFloat16(bits);
+    }
+
+    float readFloat32()
+    {
+        if (!canRead(4))
+            return 0.0f;
+        union
+        {
+            uint32_t u = 0u;
+            float f;
+        } cvt;
+        cvt.u = readUInt32();
+        return cvt.f;
+    }
+
+    std::vector<float> readFloatArray(int count, bool half)
+    {
+        std::vector<float> values;
+        if (count <= 0)
+            return values;
+        values.resize(static_cast<size_t>(count), 0.0f);
+        for (int i = 0; i < count; ++i)
+            values[static_cast<size_t>(i)] = half ? readFloat16() : readFloat32();
+        return values;
+    }
+
+private:
+    const std::vector<uint8_t>& bytes;
+    size_t offset = 0;
+};
+
+NuXnnLayer parseNuXnnLayer(NuXnnReader& reader, int inputSize);
+
+NuXnnLayer parseNuXnnDenseLayer(NuXnnReader& reader, int inputSize, bool halfPrecision)
+{
+    NuXnnLayer layer;
+    const int outputSize = static_cast<int>(reader.readUInt32());
+    if (outputSize <= 0 || inputSize <= 0)
+        return layer;
+
+    std::vector<std::vector<float>> kernel;
+    kernel.resize(static_cast<size_t>(outputSize));
+    for (int i = 0; i < outputSize; ++i)
+        kernel[static_cast<size_t>(i)] = reader.readFloatArray(inputSize, halfPrecision);
+    const auto bias = reader.readFloatArray(outputSize, halfPrecision);
+
+    layer.outputSize = outputSize;
+    layer.valid = true;
+    layer.eval = [kernelData = std::move(kernel), bias, outputSize](const std::vector<float>& input)
+    {
+        std::vector<float> out(static_cast<size_t>(outputSize), 0.0f);
+        for (int row = 0; row < outputSize; ++row)
+        {
+            float sum = bias[static_cast<size_t>(row)];
+            const auto& k = kernelData[static_cast<size_t>(row)];
+            const size_t n = juce::jmin(k.size(), input.size());
+            for (size_t i = 0; i < n; ++i)
+                sum += k[i] * input[i];
+            out[static_cast<size_t>(row)] = sum;
+        }
+        return out;
+    };
+    return layer;
+}
+
+NuXnnLayer parseNuXnnLayer(NuXnnReader& reader, int inputSize)
+{
+    NuXnnLayer layer;
+    if (inputSize <= 0)
+        return layer;
+
+    const uint32_t tag = reader.readUInt32();
+    if (tag == 0u)
+        return layer;
+
+    // Tanh
+    if (tag == 0xd9fd8e7bu)
+    {
+        layer.outputSize = inputSize;
+        layer.valid = true;
+        layer.eval = [](const std::vector<float>& input)
+        {
+            std::vector<float> out = input;
+            for (auto& v : out)
+                v = std::tanh(v);
+            return out;
+        };
+        return layer;
+    }
+
+    // Sigmoid
+    if (tag == 0xd5b8e08eu)
+    {
+        layer.outputSize = inputSize;
+        layer.valid = true;
+        layer.eval = [](const std::vector<float>& input)
+        {
+            std::vector<float> out = input;
+            for (auto& v : out)
+                v = 1.0f / (1.0f + std::exp(-v));
+            return out;
+        };
+        return layer;
+    }
+
+    // LeakyReLU + alpha
+    if (tag == 0xf36cdc69u)
+    {
+        const float alpha = reader.readFloat32();
+        layer.outputSize = inputSize;
+        layer.valid = true;
+        layer.eval = [alpha](const std::vector<float>& input)
+        {
+            std::vector<float> out = input;
+            for (auto& v : out)
+                v = juce::jmax(v * alpha, v);
+            return out;
+        };
+        return layer;
+    }
+
+    // 16-bit Dense
+    if (tag == 0x9cb138bcu)
+        return parseNuXnnDenseLayer(reader, inputSize, true);
+    // 32-bit Dense
+    if (tag == 0x5a5591ebu)
+        return parseNuXnnDenseLayer(reader, inputSize, false);
+
+    // Sequential
+    if (tag == 0xa7fb7d64u)
+    {
+        std::vector<NuXnnLayer> layers;
+        int currentSize = inputSize;
+        for (;;)
+        {
+            auto next = parseNuXnnLayer(reader, currentSize);
+            if (!next.valid)
+                break;
+            currentSize = next.outputSize;
+            layers.push_back(std::move(next));
+        }
+        if (layers.empty() || currentSize <= 0)
+            return {};
+        layer.outputSize = currentSize;
+        layer.valid = true;
+        layer.eval = [sequenceLayers = std::move(layers)](const std::vector<float>& input)
+        {
+            std::vector<float> v = input;
+            for (const auto& l : sequenceLayers)
+                v = l.eval(v);
+            return v;
+        };
+        return layer;
+    }
+
+    return {};
+}
+
+NuXnnModel parseNuXnnModel(const std::vector<uint8_t>& bytes)
+{
+    NuXnnModel model;
+    if (bytes.empty())
+        return model;
+
+    NuXnnReader reader(bytes);
+    const uint32_t magic = reader.readUInt32();
+    if (magic != 0x8d77306fu && magic != 0x8d773070u)
+        return model;
+
+    if (magic == 0x8d773070u)
+    {
+        const int nameLen = static_cast<int>(reader.readByte());
+        juce::String name;
+        for (int i = 0; i < nameLen; ++i)
+            name << juce::String::charToString(static_cast<juce::juce_wchar>(reader.readByte()));
+        model.name = name;
+        (void) reader.readUInt32(); // unix timestamp, not needed for runtime mapping
+    }
+
+    const int inputSize = static_cast<int>(reader.readUInt32());
+    auto root = parseNuXnnLayer(reader, inputSize);
+    if (!root.valid || inputSize <= 0)
+        return model;
+
+    model.inputSize = inputSize;
+    model.outputSize = root.outputSize;
+    model.rootEval = std::move(root.eval);
+    model.valid = (model.outputSize > 0);
+    return model;
+}
+
+std::array<float, 73> postProcessBeatSpaceVector(const std::vector<float>& raw)
+{
+    constexpr int kBeatSpaceVectorSize = 73;
+    constexpr int kBeatSpacePatchParamCount = 25;
+    std::array<float, kBeatSpaceVectorSize> out{};
+    out.fill(0.0f);
+    if (raw.empty())
+        return out;
+
+    // First 25 parameters are continuous 0..1 patch controls.
+    const int patchCount = juce::jmin<int>(
+        kBeatSpacePatchParamCount,
+        juce::jmin<int>(kBeatSpaceVectorSize, static_cast<int>(raw.size())));
+    for (int i = 0; i < patchCount; ++i)
+        out[static_cast<size_t>(i)] = juce::jlimit(0.0f, 1.0f, raw[static_cast<size_t>(i)]);
+
+    // Pattern section: 16 * (trigger, accent, fill), with same trigger normalization
+    // strategy as the BeatSpace script.
+    const int firstPatternIndex = kBeatSpacePatchParamCount;
+    if (static_cast<int>(raw.size()) <= firstPatternIndex)
+        return out;
+
+    float maxWeight = 0.001f;
+    for (int step = 0; step < 16; ++step)
+    {
+        const int idx = firstPatternIndex + (step * 3);
+        if (idx >= static_cast<int>(raw.size()))
+            break;
+        maxWeight = juce::jmax(maxWeight, raw[static_cast<size_t>(idx)]);
+    }
+    const float norm = (maxWeight < 0.5001f) ? (0.5001f / juce::jmax(0.0001f, maxWeight)) : 1.0f;
+
+    for (int step = 0; step < 16; ++step)
+    {
+        const int idx = firstPatternIndex + (step * 3);
+        if ((idx + 2) >= static_cast<int>(raw.size()) || (idx + 2) >= kBeatSpaceVectorSize)
+            break;
+        const bool trig = (raw[static_cast<size_t>(idx)] * norm) >= 0.5f;
+        const bool accent = trig && (raw[static_cast<size_t>(idx + 1)] >= 0.5f);
+        const bool fill = trig && (raw[static_cast<size_t>(idx + 2)] >= 0.5f);
+        out[static_cast<size_t>(idx)] = trig ? 1.0f : 0.0f;
+        out[static_cast<size_t>(idx + 1)] = accent ? 1.0f : 0.0f;
+        out[static_cast<size_t>(idx + 2)] = fill ? 1.0f : 0.0f;
+    }
+    return out;
+}
+
+float scoreBeatSpaceCategoryPoint(int category, const std::array<float, 73>& values)
+{
+    constexpr int kBeatSpacePatchParamCount = 25;
+    const float oscFreq = juce::jlimit(0.0f, 1.0f, values[1]);
+    const float oscAtk = juce::jlimit(0.0f, 1.0f, values[2]);
+    const float oscDcy = juce::jlimit(0.0f, 1.0f, values[3]);
+    const float modAmt = juce::jlimit(0.0f, 1.0f, values[6]);
+    const float nFilFrq = juce::jlimit(0.0f, 1.0f, values[8]);
+    const float nFilQ = juce::jlimit(0.0f, 1.0f, values[9]);
+    const float nStereo = juce::jlimit(0.0f, 1.0f, values[10]);
+    const float nEnvAtk = juce::jlimit(0.0f, 1.0f, values[12]);
+    const float nEnvDcy = juce::jlimit(0.0f, 1.0f, values[13]);
+    const float mix = juce::jlimit(0.0f, 1.0f, values[14]);
+    const float dist = juce::jlimit(0.0f, 1.0f, values[15]);
+    const float eqFreq = juce::jlimit(0.0f, 1.0f, values[16]);
+    const float eqGain = juce::jlimit(0.0f, 1.0f, values[17]);
+
+    float triggerDensity = 0.0f;
+    float accentDensity = 0.0f;
+    float fillDensity = 0.0f;
+    for (int step = 0; step < 16; ++step)
+    {
+        const int idx = kBeatSpacePatchParamCount + (step * 3);
+        if (values[static_cast<size_t>(idx)] >= 0.5f)
+            triggerDensity += 1.0f;
+        if (values[static_cast<size_t>(idx + 1)] >= 0.5f)
+            accentDensity += 1.0f;
+        if (values[static_cast<size_t>(idx + 2)] >= 0.5f)
+            fillDensity += 1.0f;
+    }
+    triggerDensity /= 16.0f;
+    accentDensity /= 16.0f;
+    fillDensity /= 16.0f;
+
+    const float lowBody = juce::jlimit(0.0f, 1.0f, ((1.0f - oscFreq) * 0.58f) + ((1.0f - nFilFrq) * 0.42f));
+    const float highBody = juce::jlimit(0.0f, 1.0f, (oscFreq * 0.52f) + (nFilFrq * 0.48f));
+    const float transient = juce::jlimit(0.0f, 1.0f, ((1.0f - oscAtk) * 0.62f) + ((1.0f - nEnvAtk) * 0.38f));
+    const float tail = juce::jlimit(0.0f, 1.0f, (oscDcy * 0.55f) + (nEnvDcy * 0.45f));
+    const float noisiness = juce::jlimit(0.0f, 1.0f, (mix * 0.62f) + (modAmt * 0.26f) + (nFilQ * 0.12f));
+    const float tonalness = juce::jlimit(0.0f, 1.0f, ((1.0f - mix) * 0.78f) + ((1.0f - modAmt) * 0.22f));
+
+    auto centered = [](float value, float center, float width)
+    {
+        if (width <= 0.0f)
+            return 0.0f;
+        const float t = 1.0f - (std::abs(value - center) / width);
+        return juce::jlimit(0.0f, 1.0f, t);
+    };
+
+    switch (category)
+    {
+        case 0: // Kick
+            return 0.34f * lowBody
+                + 0.16f * transient
+                + 0.14f * centered(tail, 0.34f, 0.38f)
+                + 0.12f * tonalness
+                + 0.10f * dist
+                + 0.08f * centered(triggerDensity, 0.40f, 0.30f)
+                + 0.06f * centered(accentDensity, 0.35f, 0.28f);
+        case 1: // Snare
+            return 0.20f * centered(oscFreq, 0.44f, 0.30f)
+                + 0.18f * noisiness
+                + 0.14f * centered(eqFreq, 0.56f, 0.42f)
+                + 0.12f * centered(tail, 0.46f, 0.34f)
+                + 0.12f * transient
+                + 0.10f * dist
+                + 0.08f * centered(triggerDensity, 0.44f, 0.30f)
+                + 0.06f * centered(fillDensity, 0.24f, 0.24f);
+        case 2: // Closed hat
+            return 0.30f * highBody
+                + 0.16f * noisiness
+                + 0.15f * transient
+                + 0.14f * (1.0f - tail)
+                + 0.10f * centered(triggerDensity, 0.62f, 0.32f)
+                + 0.08f * centered(accentDensity, 0.26f, 0.24f)
+                + 0.07f * centered(fillDensity, 0.16f, 0.18f);
+        case 3: // Open hat
+            return 0.24f * highBody
+                + 0.18f * noisiness
+                + 0.20f * centered(tail, 0.70f, 0.28f)
+                + 0.12f * centered(triggerDensity, 0.52f, 0.34f)
+                + 0.10f * centered(fillDensity, 0.22f, 0.24f)
+                + 0.10f * centered(accentDensity, 0.30f, 0.24f)
+                + 0.06f * nStereo;
+        case 4: // Percussion
+            return 0.18f * centered(oscFreq, 0.56f, 0.38f)
+                + 0.12f * centered(nFilFrq, 0.54f, 0.36f)
+                + 0.12f * centered(tail, 0.52f, 0.34f)
+                + 0.11f * centered(triggerDensity, 0.48f, 0.34f)
+                + 0.10f * modAmt
+                + 0.10f * nStereo
+                + 0.09f * dist
+                + 0.09f * centered(nFilQ, 0.62f, 0.30f)
+                + 0.09f * centered(fillDensity, 0.28f, 0.26f);
+        case 5: // Misc
+        default:
+            return 0.17f * modAmt
+                + 0.17f * nStereo
+                + 0.15f * juce::jlimit(0.0f, 1.0f, std::abs((eqGain * 2.0f) - 1.0f))
+                + 0.12f * dist
+                + 0.11f * centered(triggerDensity, 0.50f, 0.48f)
+                + 0.10f * centered(oscFreq, 0.50f, 0.46f)
+                + 0.09f * centered(nFilQ, 0.72f, 0.32f)
+                + 0.09f * centered(fillDensity, 0.36f, 0.30f);
+    }
+}
 
 bool isPersistentGlobalControlParameterId(const juce::String& parameterID)
 {
@@ -1041,14 +1511,14 @@ void MonomeConnection::handleArcMessage(const juce::OSCMessage& message)
 }
 
 //==============================================================================
-// MlrVSTAudioProcessor Implementation
+// StepVstHostAudioProcessor Implementation
 //==============================================================================
 
-class MlrVSTAudioProcessor::PresetSaveJob final : public juce::ThreadPoolJob
+class StepVstHostAudioProcessor::PresetSaveJob final : public juce::ThreadPoolJob
 {
 public:
-    PresetSaveJob(MlrVSTAudioProcessor& ownerIn, PresetSaveRequest requestIn)
-        : juce::ThreadPoolJob("mlrVSTPresetSave_" + juce::String(requestIn.presetIndex + 1)),
+    PresetSaveJob(StepVstHostAudioProcessor& ownerIn, PresetSaveRequest requestIn)
+        : juce::ThreadPoolJob("stepVstHostPresetSave_" + juce::String(requestIn.presetIndex + 1)),
           owner(ownerIn),
           request(std::move(requestIn))
     {
@@ -1068,11 +1538,11 @@ public:
     }
 
 private:
-    MlrVSTAudioProcessor& owner;
+    StepVstHostAudioProcessor& owner;
     PresetSaveRequest request;
 };
 
-MlrVSTAudioProcessor::MlrVSTAudioProcessor()
+StepVstHostAudioProcessor::StepVstHostAudioProcessor()
      : AudioProcessor(BusesProperties()
                       .withInput("Input", juce::AudioChannelSet::stereo(), true)
                       .withOutput("Strip 1", juce::AudioChannelSet::stereo(), true)
@@ -1081,13 +1551,12 @@ MlrVSTAudioProcessor::MlrVSTAudioProcessor()
                       .withOutput("Strip 4", juce::AudioChannelSet::stereo(), false)
                       .withOutput("Strip 5", juce::AudioChannelSet::stereo(), false)
                       .withOutput("Strip 6", juce::AudioChannelSet::stereo(), false)),
-       parameters(*this, nullptr, juce::Identifier("MlrVST"), createParameterLayout())
+       parameters(*this, nullptr, juce::Identifier("StepVstHost"), createParameterLayout())
 {
     // Initialize audio engine
     audioEngine = std::make_unique<ModernAudioEngine>();
     cacheParameterPointers();
     loadPersistentDefaultPaths();
-    loadPersistentControlPages();
     loadPersistentGlobalControls();
     persistentGlobalControlsReady.store(1, std::memory_order_release);
     pendingPersistentGlobalControlsRestore.store(1, std::memory_order_release);
@@ -1100,8 +1569,88 @@ MlrVSTAudioProcessor::MlrVSTAudioProcessor()
     for (int i = 0; i < MaxStrips; ++i)
     {
         laneMidiChannel[static_cast<size_t>(i)].store(juce::jlimit(1, 16, i + 1), std::memory_order_relaxed);
-        laneMidiNote[static_cast<size_t>(i)].store(60, std::memory_order_relaxed);
+        laneMidiNote[static_cast<size_t>(i)].store(juce::jlimit(0, 127, 36 + i), std::memory_order_relaxed);
+        hostedLastCcVolume[static_cast<size_t>(i)] = -1;
+        hostedLastCcPan[static_cast<size_t>(i)] = -1;
+        hostedLastCcPitch[static_cast<size_t>(i)] = -1;
+        hostedDirectParamVolume[static_cast<size_t>(i)] = -1;
+        hostedDirectParamPan[static_cast<size_t>(i)] = -1;
+        hostedDirectParamPitch[static_cast<size_t>(i)] = -1;
+        hostedDirectParamAttack[static_cast<size_t>(i)] = -1;
+        hostedDirectParamDecay[static_cast<size_t>(i)] = -1;
+        hostedDirectParamRelease[static_cast<size_t>(i)] = -1;
+        hostedDirectParamAttackAux[static_cast<size_t>(i)] = -1;
+        hostedLastDirectParamVolume[static_cast<size_t>(i)] = -1.0f;
+        hostedLastDirectParamPan[static_cast<size_t>(i)] = -1.0f;
+        hostedLastDirectParamPitch[static_cast<size_t>(i)] = -1.0f;
+        hostedLastDirectParamAttack[static_cast<size_t>(i)] = -1.0f;
+        hostedLastDirectParamDecay[static_cast<size_t>(i)] = -1.0f;
+        hostedLastDirectParamRelease[static_cast<size_t>(i)] = -1.0f;
+        hostedLastDirectParamAttackAux[static_cast<size_t>(i)] = -1.0f;
+        hostedProgramNumber[static_cast<size_t>(i)] = 0;
+        hostedPendingProgramDelta[static_cast<size_t>(i)].store(0, std::memory_order_relaxed);
+        hostedTraversalRatioAtLastTick[static_cast<size_t>(i)] = -1.0;
+        hostedTraversalPhaseOffsetTicks[static_cast<size_t>(i)] = 0.0;
+        beatSpaceParamMap[static_cast<size_t>(i)].fill(-1);
+        beatSpaceCurrentVectors[static_cast<size_t>(i)].fill(0.0f);
+        beatSpaceMorphStartVectors[static_cast<size_t>(i)].fill(0.0f);
+        beatSpaceMorphTargetVectors[static_cast<size_t>(i)].fill(0.0f);
+        beatSpaceChannelPoints[static_cast<size_t>(i)] = { BeatSpaceTableSize / 2, BeatSpaceTableSize / 2 };
+        beatSpaceMorphStartPoints[static_cast<size_t>(i)] = beatSpaceChannelPoints[static_cast<size_t>(i)];
+        beatSpaceMorphTargetPoints[static_cast<size_t>(i)] = beatSpaceChannelPoints[static_cast<size_t>(i)];
+        beatSpaceMorphCurrentPoints[static_cast<size_t>(i)] = beatSpaceChannelPoints[static_cast<size_t>(i)];
+        beatSpaceMorphProgress[static_cast<size_t>(i)] = 1.0f;
+        beatSpaceLastAppliedTableIndex[static_cast<size_t>(i)] = -1;
+        beatSpaceLastRecallMaxError[static_cast<size_t>(i)] = 0.0f;
+        beatSpaceChannelMappingReady[static_cast<size_t>(i)] = false;
+        beatSpaceMorphActive[static_cast<size_t>(i)] = false;
     }
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+    {
+        beatSpaceLinkedOffsets[static_cast<size_t>(i)] = { 0.0f, 0.0f };
+        beatSpaceChannelCategoryAssignment[static_cast<size_t>(i)] = i;
+        beatSpaceZoneLockStrength[static_cast<size_t>(i)] = 0.72f;
+        beatSpacePaths[static_cast<size_t>(i)] = BeatSpacePathState{};
+        for (int b = 0; b < BeatSpaceBookmarkSlots; ++b)
+            beatSpaceBookmarks[static_cast<size_t>(i)][static_cast<size_t>(b)] = BeatSpaceBookmark{};
+        beatSpaceCategoryColorCluster[static_cast<size_t>(i)] = -1;
+        beatSpaceCategoryAnchorManual[static_cast<size_t>(i)] = false;
+        beatSpaceCategoryManualTagCounts[static_cast<size_t>(i)] = 0;
+        beatSpaceCategoryPresetPointsReady[static_cast<size_t>(i)] = false;
+        beatSpaceCategoryAnchors[static_cast<size_t>(i)] = {
+            BeatSpaceTableSize / 2,
+            BeatSpaceTableSize / 2
+        };
+        beatSpaceCategoryManualAnchors[static_cast<size_t>(i)] = beatSpaceCategoryAnchors[static_cast<size_t>(i)];
+        beatSpaceCategoryManualTagPoints[static_cast<size_t>(i)].fill(beatSpaceCategoryAnchors[static_cast<size_t>(i)]);
+        beatSpaceCategoryPresetPoints[static_cast<size_t>(i)].fill(beatSpaceCategoryAnchors[static_cast<size_t>(i)]);
+        beatSpaceCategoryPresetOrder[static_cast<size_t>(i)].fill(0);
+        beatSpaceCategoryPresetHidden[static_cast<size_t>(i)].fill(false);
+        beatSpaceCategoryPresetLabels[static_cast<size_t>(i)].fill({});
+        for (int slot = 0; slot < BeatSpacePresetSlotsPerSpace; ++slot)
+            beatSpaceCategoryPresetOrder[static_cast<size_t>(i)][static_cast<size_t>(slot)] = slot;
+        // Kick, snare, closed hat, open hat, percussion, misc
+        static constexpr std::array<int, BeatSpaceChannels> kRegionRx { 10, 10, 9, 9, 12, 12 };
+        static constexpr std::array<int, BeatSpaceChannels> kRegionRy { 10, 10, 9, 9, 11, 11 };
+        beatSpaceCategoryRegionRadiusX[static_cast<size_t>(i)] = kRegionRx[static_cast<size_t>(i)];
+        beatSpaceCategoryRegionRadiusY[static_cast<size_t>(i)] = kRegionRy[static_cast<size_t>(i)];
+    }
+    beatSpaceLinkedOffsetsReady = false;
+    beatSpaceCategoryAnchorsReady = false;
+    beatSpaceColorClustersReady = false;
+    hostedDefaultAutoLoadAttempted = false;
+    beatSpaceSelectedChannel = 0;
+    beatSpaceLinkAllChannels = false;
+    beatSpaceZoomLevel = 0;
+    beatSpaceViewX = 0;
+    beatSpaceViewY = 0;
+    beatSpaceMorphStartTimeMs = 0.0;
+    beatSpaceMorphDurationMs = 160.0;
+    beatSpaceStatusMessage = "BeatSpace table not loaded";
+    initializeBeatSpaceTable();
+    // Load control pages after BeatSpace defaults/table init so persisted BeatSpace
+    // assignments/tags are not overwritten by constructor initialization.
+    loadPersistentControlPages();
 
     for (auto& held : arcKeyHeld)
         held = 0;
@@ -1164,7 +1713,7 @@ MlrVSTAudioProcessor::MlrVSTAudioProcessor()
     // Don't connect yet - wait for prepareToPlay
 }
 
-void MlrVSTAudioProcessor::cacheParameterPointers()
+void StepVstHostAudioProcessor::cacheParameterPointers()
 {
     masterVolumeParam = parameters.getRawParameterValue("masterVolume");
     limiterThresholdParam = parameters.getRawParameterValue("limiterThreshold");
@@ -1179,11 +1728,14 @@ void MlrVSTAudioProcessor::cacheParameterPointers()
         stripPanParams[static_cast<size_t>(i)] = parameters.getRawParameterValue("stripPan" + juce::String(i));
         stripSpeedParams[static_cast<size_t>(i)] = parameters.getRawParameterValue("stripSpeed" + juce::String(i));
         stripPitchParams[static_cast<size_t>(i)] = parameters.getRawParameterValue("stripPitch" + juce::String(i));
+        stripStepAttackParams[static_cast<size_t>(i)] = parameters.getRawParameterValue("stripStepAttack" + juce::String(i));
+        stripStepDecayParams[static_cast<size_t>(i)] = parameters.getRawParameterValue("stripStepDecay" + juce::String(i));
+        stripStepReleaseParams[static_cast<size_t>(i)] = parameters.getRawParameterValue("stripStepRelease" + juce::String(i));
         stripSliceLengthParams[static_cast<size_t>(i)] = parameters.getRawParameterValue("stripSliceLength" + juce::String(i));
     }
 }
 
-void MlrVSTAudioProcessor::parameterChanged(const juce::String& parameterID, float /*newValue*/)
+void StepVstHostAudioProcessor::parameterChanged(const juce::String& parameterID, float /*newValue*/)
 {
     if (!isPersistentGlobalControlParameterId(parameterID))
         return;
@@ -1191,14 +1743,14 @@ void MlrVSTAudioProcessor::parameterChanged(const juce::String& parameterID, flo
     queuePersistentGlobalControlsSave();
 }
 
-void MlrVSTAudioProcessor::markPersistentGlobalUserChange()
+void StepVstHostAudioProcessor::markPersistentGlobalUserChange()
 {
     persistentGlobalUserTouched.store(1, std::memory_order_release);
     persistentGlobalControlsReady.store(1, std::memory_order_release);
     queuePersistentGlobalControlsSave();
 }
 
-void MlrVSTAudioProcessor::queuePersistentGlobalControlsSave()
+void StepVstHostAudioProcessor::queuePersistentGlobalControlsSave()
 {
     if (suppressPersistentGlobalControlsSave.load(std::memory_order_acquire) != 0)
         return;
@@ -1215,7 +1767,7 @@ void MlrVSTAudioProcessor::queuePersistentGlobalControlsSave()
     persistentGlobalControlsDirty.store(1, std::memory_order_release);
 }
 
-MlrVSTAudioProcessor::~MlrVSTAudioProcessor()
+StepVstHostAudioProcessor::~StepVstHostAudioProcessor()
 {
     for (const auto* id : kPersistentGlobalControlParameterIds)
         parameters.removeParameterListener(id, this);
@@ -1226,7 +1778,7 @@ MlrVSTAudioProcessor::~MlrVSTAudioProcessor()
     monomeConnection.disconnect();
 }
 
-juce::String MlrVSTAudioProcessor::getControlModeName(ControlMode mode)
+juce::String StepVstHostAudioProcessor::getControlModeName(ControlMode mode)
 {
     switch (mode)
     {
@@ -1234,13 +1786,14 @@ juce::String MlrVSTAudioProcessor::getControlModeName(ControlMode mode)
         case ControlMode::Pitch: return "Pitch";
         case ControlMode::Pan: return "Pan";
         case ControlMode::Volume: return "Volume";
-        case ControlMode::GrainSize: return "Grain Size";
+        case ControlMode::Length: return "Length";
         case ControlMode::Filter: return "Filter";
         case ControlMode::Swing: return "Swing";
         case ControlMode::Gate: return "Gate";
         case ControlMode::FileBrowser: return "Browser";
         case ControlMode::GroupAssign: return "Group";
         case ControlMode::Modulation: return "Modulation";
+        case ControlMode::BeatSpace: return "BeatSpace";
         case ControlMode::Preset: return "Preset";
         case ControlMode::StepEdit: return "Step Edit";
         case ControlMode::Normal:
@@ -1248,7 +1801,7 @@ juce::String MlrVSTAudioProcessor::getControlModeName(ControlMode mode)
     }
 }
 
-int MlrVSTAudioProcessor::getMonomeGridWidth() const
+int StepVstHostAudioProcessor::getMonomeGridWidth() const
 {
     if (!monomeConnection.supportsGrid())
         return MaxGridWidth;
@@ -1258,7 +1811,7 @@ int MlrVSTAudioProcessor::getMonomeGridWidth() const
     return juce::jlimit(1, MaxGridWidth, reportedWidth);
 }
 
-int MlrVSTAudioProcessor::getMonomeGridHeight() const
+int StepVstHostAudioProcessor::getMonomeGridHeight() const
 {
     if (!monomeConnection.supportsGrid())
         return 8;
@@ -1268,23 +1821,23 @@ int MlrVSTAudioProcessor::getMonomeGridHeight() const
     return juce::jlimit(2, MaxGridHeight, reportedHeight);
 }
 
-int MlrVSTAudioProcessor::getMonomeControlRow() const
+int StepVstHostAudioProcessor::getMonomeControlRow() const
 {
     return juce::jmax(1, getMonomeGridHeight() - 1);
 }
 
-int MlrVSTAudioProcessor::getMonomeActiveStripCount() const
+int StepVstHostAudioProcessor::getMonomeActiveStripCount() const
 {
     const int stripRows = juce::jmax(0, getMonomeControlRow() - 1);
     return juce::jlimit(0, MaxStrips, stripRows);
 }
 
-MlrVSTAudioProcessor::PitchControlMode MlrVSTAudioProcessor::getPitchControlMode() const
+StepVstHostAudioProcessor::PitchControlMode StepVstHostAudioProcessor::getPitchControlMode() const
 {
     return PitchControlMode::PitchShift;
 }
 
-void MlrVSTAudioProcessor::applyPitchControlToStrip(EnhancedAudioStrip& strip, float semitones)
+void StepVstHostAudioProcessor::applyPitchControlToStrip(EnhancedAudioStrip& strip, float semitones)
 {
     const float clampedSemitones = juce::jlimit(-24.0f, 24.0f, semitones);
     const float ratio = juce::jlimit(0.125f, 4.0f, std::pow(2.0f, clampedSemitones / 12.0f));
@@ -1320,7 +1873,7 @@ void MlrVSTAudioProcessor::applyPitchControlToStrip(EnhancedAudioStrip& strip, f
     strip.setPitchShift(clampedSemitones);
 }
 
-float MlrVSTAudioProcessor::getPitchSemitonesForDisplay(const EnhancedAudioStrip& strip) const
+float StepVstHostAudioProcessor::getPitchSemitonesForDisplay(const EnhancedAudioStrip& strip) const
 {
     if (strip.getPlayMode() == EnhancedAudioStrip::PlayMode::Step)
     {
@@ -1340,20 +1893,20 @@ float MlrVSTAudioProcessor::getPitchSemitonesForDisplay(const EnhancedAudioStrip
     return strip.getPitchShift();
 }
 
-MlrVSTAudioProcessor::ControlPageOrder MlrVSTAudioProcessor::getControlPageOrder() const
+StepVstHostAudioProcessor::ControlPageOrder StepVstHostAudioProcessor::getControlPageOrder() const
 {
     const juce::ScopedLock lock(controlPageOrderLock);
     return controlPageOrder;
 }
 
-MlrVSTAudioProcessor::ControlMode MlrVSTAudioProcessor::getControlModeForControlButton(int buttonIndex) const
+StepVstHostAudioProcessor::ControlMode StepVstHostAudioProcessor::getControlModeForControlButton(int buttonIndex) const
 {
     const int clamped = juce::jlimit(0, NumControlRowPages - 1, buttonIndex);
     const juce::ScopedLock lock(controlPageOrderLock);
     return controlPageOrder[static_cast<size_t>(clamped)];
 }
 
-int MlrVSTAudioProcessor::getControlButtonForMode(ControlMode mode) const
+int StepVstHostAudioProcessor::getControlButtonForMode(ControlMode mode) const
 {
     const juce::ScopedLock lock(controlPageOrderLock);
     for (int i = 0; i < NumControlRowPages; ++i)
@@ -1364,7 +1917,7 @@ int MlrVSTAudioProcessor::getControlButtonForMode(ControlMode mode) const
     return -1;
 }
 
-void MlrVSTAudioProcessor::moveControlPage(int fromIndex, int toIndex)
+void StepVstHostAudioProcessor::moveControlPage(int fromIndex, int toIndex)
 {
     if (fromIndex == toIndex)
         return;
@@ -1383,13 +1936,13 @@ void MlrVSTAudioProcessor::moveControlPage(int fromIndex, int toIndex)
     savePersistentControlPages();
 }
 
-void MlrVSTAudioProcessor::setControlPageMomentary(bool shouldBeMomentary)
+void StepVstHostAudioProcessor::setControlPageMomentary(bool shouldBeMomentary)
 {
     controlPageMomentary.store(shouldBeMomentary, std::memory_order_release);
     savePersistentControlPages();
 }
 
-void MlrVSTAudioProcessor::setSwingDivisionSelection(int mode)
+void StepVstHostAudioProcessor::setSwingDivisionSelection(int mode)
 {
     const int maxDivision = static_cast<int>(EnhancedAudioStrip::SwingDivision::SixteenthTriplet);
     const int clamped = juce::jlimit(0, maxDivision, mode);
@@ -1399,7 +1952,7 @@ void MlrVSTAudioProcessor::setSwingDivisionSelection(int mode)
     savePersistentControlPages();
 }
 
-void MlrVSTAudioProcessor::setControlModeFromGui(ControlMode mode, bool shouldBeActive)
+void StepVstHostAudioProcessor::setControlModeFromGui(ControlMode mode, bool shouldBeActive)
 {
     if (!shouldBeActive || mode == ControlMode::Normal)
     {
@@ -1415,7 +1968,7 @@ void MlrVSTAudioProcessor::setControlModeFromGui(ControlMode mode, bool shouldBe
     updateMonomeLEDs();
 }
 
-juce::AudioProcessorValueTreeState::ParameterLayout MlrVSTAudioProcessor::createParameterLayout()
+juce::AudioProcessorValueTreeState::ParameterLayout StepVstHostAudioProcessor::createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
     const auto globalFloatAttrs = juce::AudioParameterFloatAttributes().withAutomatable(false);
@@ -1464,6 +2017,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout MlrVSTAudioProcessor::create
     
     for (int i = 0; i < MaxStrips; ++i)
     {
+        juce::NormalisableRange<float> attackRange(0.0f, 400.0f, 0.1f);
+        attackRange.setSkewForCentre(12.0f);
+        juce::NormalisableRange<float> decayRange(1.0f, 4000.0f, 0.1f);
+        decayRange.setSkewForCentre(700.0f);
+        juce::NormalisableRange<float> releaseRange(1.0f, 4000.0f, 0.1f);
+        releaseRange.setSkewForCentre(180.0f);
+
         layout.add(std::make_unique<juce::AudioParameterFloat>(
             "stripVolume" + juce::String(i),
             "Strip " + juce::String(i + 1) + " Volume",
@@ -1479,7 +2039,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MlrVSTAudioProcessor::create
         layout.add(std::make_unique<juce::AudioParameterFloat>(
             "stripSpeed" + juce::String(i),
             "Strip " + juce::String(i + 1) + " Playhead Speed",
-            juce::NormalisableRange<float>(0.0f, 4.0f, 0.01f, 0.5f),
+            juce::NormalisableRange<float>(0.0f, 8.0f, 0.01f, 0.5f),
             1.0f));
 
         layout.add(std::make_unique<juce::AudioParameterFloat>(
@@ -1487,6 +2047,24 @@ juce::AudioProcessorValueTreeState::ParameterLayout MlrVSTAudioProcessor::create
             "Strip " + juce::String(i + 1) + " Pitch",
             juce::NormalisableRange<float>(-24.0f, 24.0f, 0.01f),
             0.0f));
+
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            "stripStepAttack" + juce::String(i),
+            "Strip " + juce::String(i + 1) + " Step Attack",
+            attackRange,
+            0.0f));
+
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            "stripStepDecay" + juce::String(i),
+            "Strip " + juce::String(i + 1) + " Step Decay",
+            decayRange,
+            4000.0f));
+
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            "stripStepRelease" + juce::String(i),
+            "Strip " + juce::String(i + 1) + " Step Release",
+            releaseRange,
+            110.0f));
 
         layout.add(std::make_unique<juce::AudioParameterFloat>(
             "stripSliceLength" + juce::String(i),
@@ -1499,11 +2077,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout MlrVSTAudioProcessor::create
 }
 
 //==============================================================================
-void MlrVSTAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
+void StepVstHostAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     currentSampleRate = sampleRate;
     audioEngine->prepareToPlay(sampleRate, samplesPerBlock);
     hostRack.prepareToPlay(sampleRate, samplesPerBlock);
+    juce::String hostedLoadError;
+    if (!loadDefaultHostedInstrumentIfNeeded(hostedLoadError) && hostedLoadError.isNotEmpty())
+        DBG("Default hosted plugin auto-load failed: " << hostedLoadError);
+    refreshBeatSpaceParameterMap();
     lastAppliedSoundTouchEnabled = -1;
     lastGridLedUpdateTimeMs = 0;
 
@@ -1550,14 +2132,14 @@ void MlrVSTAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     pendingPersistentGlobalControlsRestoreRemaining = 5;
 }
 
-void MlrVSTAudioProcessor::releaseResources()
+void StepVstHostAudioProcessor::releaseResources()
 {
     stopTimer();
     monomeConnection.disconnect();
     hostRack.releaseResources();
 }
 
-bool MlrVSTAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
+bool StepVstHostAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
     // Main output is fixed stereo; strip outputs are stereo buses.
     auto mainOutput = layouts.getMainOutputChannelSet();
@@ -1583,7 +2165,7 @@ bool MlrVSTAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) co
     return true;
 }
 
-void MlrVSTAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+void StepVstHostAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
     
@@ -1653,6 +2235,7 @@ void MlrVSTAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     applyPendingBarChanges(posInfo);
     applyPendingStutterRelease(posInfo);
     applyPendingStutterStart(posInfo);
+    updateSubPresetQuantizedRecall(posInfo, buffer.getNumSamples());
 
     // Update strip parameters
     for (int i = 0; i < MaxStrips; ++i)
@@ -1672,7 +2255,7 @@ void MlrVSTAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
             if (speedParam)
             {
                 const float speedRatio = PlayheadSpeedQuantizer::quantizeRatio(
-                    juce::jlimit(0.0f, 4.0f, speedParam->load(std::memory_order_acquire)));
+                    juce::jlimit(0.0f, 8.0f, speedParam->load(std::memory_order_acquire)));
                 strip->setPlayheadSpeedRatio(speedRatio);
             }
 
@@ -1680,12 +2263,25 @@ void MlrVSTAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
             if (pitchParam)
                 applyPitchControlToStrip(*strip, pitchParam->load(std::memory_order_acquire));
 
+            auto* stepAttackParam = stripStepAttackParams[static_cast<size_t>(i)];
+            if (stepAttackParam)
+                strip->setStepEnvelopeAttackMs(stepAttackParam->load(std::memory_order_acquire));
+
+            auto* stepDecayParam = stripStepDecayParams[static_cast<size_t>(i)];
+            if (stepDecayParam)
+                strip->setStepEnvelopeDecayMs(stepDecayParam->load(std::memory_order_acquire));
+
+            auto* stepReleaseParam = stripStepReleaseParams[static_cast<size_t>(i)];
+            if (stepReleaseParam)
+                strip->setStepEnvelopeReleaseMs(stepReleaseParam->load(std::memory_order_acquire));
+
             auto* sliceLengthParam = stripSliceLengthParams[static_cast<size_t>(i)];
             if (sliceLengthParam)
                 strip->setLoopSliceLength(sliceLengthParam->load(std::memory_order_acquire));
         }
     }
 
+    updateBeatSpacePathMorph(posInfo);
     applyMomentaryStutterMacro(posInfo);
     
     const bool separateStripRouting = (outputRoutingParam != nullptr && *outputRoutingParam > 0.5f);
@@ -1754,18 +2350,18 @@ void MlrVSTAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
 }
 
 //==============================================================================
-bool MlrVSTAudioProcessor::hasEditor() const
+bool StepVstHostAudioProcessor::hasEditor() const
 {
     return true;
 }
 
-juce::AudioProcessorEditor* MlrVSTAudioProcessor::createEditor()
+juce::AudioProcessorEditor* StepVstHostAudioProcessor::createEditor()
 {
-    return new MlrVSTAudioProcessorEditor(*this);
+    return new StepVstHostAudioProcessorEditor(*this);
 }
 
 //==============================================================================
-void MlrVSTAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
+void StepVstHostAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     try
     {
@@ -1792,7 +2388,7 @@ void MlrVSTAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
     }
 }
 
-void MlrVSTAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
+void StepVstHostAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
     std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
     
@@ -1816,7 +2412,7 @@ void MlrVSTAudioProcessor::setStateInformation(const void* data, int sizeInBytes
         }
 }
 
-void MlrVSTAudioProcessor::stripPersistentGlobalControlsFromState(juce::ValueTree& state) const
+void StepVstHostAudioProcessor::stripPersistentGlobalControlsFromState(juce::ValueTree& state) const
 {
     if (!state.isValid())
         return;
@@ -1824,74 +2420,3948 @@ void MlrVSTAudioProcessor::stripPersistentGlobalControlsFromState(juce::ValueTre
         state.removeProperty(id, nullptr);
 }
 
-bool MlrVSTAudioProcessor::loadHostedInstrument(const juce::File& file, juce::String& error)
+void StepVstHostAudioProcessor::applyBeatSpaceDefaultChannelLayout()
+{
+    if (!beatSpaceDecoderReady || beatSpaceTable.empty())
+        return;
+
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+        beatSpaceChannelCategoryAssignment[static_cast<size_t>(i)] = i;
+
+    if (!beatSpaceCategoryAnchorsReady)
+        rebuildBeatSpaceCategoryAnchors();
+
+    // Kick, snare, closed hat, open hat, percussion, misc.
+    static constexpr std::array<juce::Point<int>, BeatSpaceChannels> kFallbackPoints {{
+        { 20, 20 }, { 42, 20 }, { 20, 42 }, { 42, 42 }, { 31, 16 }, { 31, 48 }
+    }};
+
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+    {
+        const auto idx = static_cast<size_t>(i);
+        const int assignedSpace = juce::jlimit(
+            0,
+            BeatSpaceChannels - 1,
+            beatSpaceChannelCategoryAssignment[idx]);
+
+        auto scoreCandidate = [&](const juce::Point<int>& candidatePoint) -> float
+        {
+            const auto p = clampBeatSpacePointToTable(candidatePoint);
+            const int tableIndex = (p.y * BeatSpaceTableSize) + p.x;
+            if (tableIndex < 0 || tableIndex >= static_cast<int>(beatSpaceTable.size()))
+                return -1.0e9f;
+
+            const auto& cellValues = beatSpaceTable[static_cast<size_t>(tableIndex)].values;
+            const float ownScore = scoreBeatSpaceCategoryPoint(assignedSpace, cellValues);
+
+            float otherBest = -1.0e9f;
+            for (int other = 0; other < BeatSpaceChannels; ++other)
+            {
+                if (other == assignedSpace)
+                    continue;
+                otherBest = juce::jmax(otherBest, scoreBeatSpaceCategoryPoint(other, cellValues));
+            }
+
+            const float margin = ownScore - otherBest;
+            const float hotspot = (tableIndex >= 0 && tableIndex < static_cast<int>(beatSpaceHotspotWeights.size()))
+                ? juce::jlimit(0.0f, 1.0f, beatSpaceHotspotWeights[static_cast<size_t>(tableIndex)])
+                : 0.35f;
+
+            float anchorPenalty = 0.0f;
+            if (beatSpaceCategoryAnchorsReady)
+            {
+                const auto anchor = beatSpaceCategoryAnchors[static_cast<size_t>(assignedSpace)];
+                const float dx = static_cast<float>(p.x - anchor.x);
+                const float dy = static_cast<float>(p.y - anchor.y);
+                const float distance = std::sqrt((dx * dx) + (dy * dy));
+                anchorPenalty = juce::jlimit(0.0f, 0.22f, distance / 90.0f);
+            }
+
+            const float confidence = getBeatSpacePointConfidence(p);
+            return ownScore
+                + (0.56f * margin)
+                + (0.24f * hotspot)
+                + (0.18f * confidence)
+                - anchorPenalty;
+        };
+
+        juce::Point<int> sourcePoint = kFallbackPoints[static_cast<size_t>(assignedSpace)];
+        float bestScore = scoreCandidate(sourcePoint);
+
+        if (beatSpaceCategoryAnchorsReady)
+        {
+            const auto anchor = beatSpaceCategoryAnchors[static_cast<size_t>(assignedSpace)];
+            const float anchorScore = scoreCandidate(anchor);
+            if (anchorScore > bestScore)
+            {
+                bestScore = anchorScore;
+                sourcePoint = anchor;
+            }
+        }
+
+        const auto visibleSlots = getBeatSpaceVisiblePresetSlotsForSpace(assignedSpace);
+        if (!visibleSlots.empty())
+        {
+            for (const int slot : visibleSlots)
+            {
+                const int clampedSlot = juce::jlimit(0, BeatSpacePresetSlotsPerSpace - 1, slot);
+                const auto candidate = beatSpaceCategoryPresetPoints[static_cast<size_t>(assignedSpace)]
+                    [static_cast<size_t>(clampedSlot)];
+                const float candidateScore = scoreCandidate(candidate);
+                if (candidateScore > bestScore)
+                {
+                    bestScore = candidateScore;
+                    sourcePoint = candidate;
+                }
+            }
+        }
+
+        // Keep startup defaults category-faithful by searching around the category
+        // anchor/region first instead of allowing far-away outliers to win globally.
+        const auto searchCenter = beatSpaceCategoryAnchorsReady
+            ? beatSpaceCategoryAnchors[static_cast<size_t>(assignedSpace)]
+            : sourcePoint;
+        const int baseRx = beatSpaceCategoryAnchorsReady
+            ? juce::jmax(1, beatSpaceCategoryRegionRadiusX[static_cast<size_t>(assignedSpace)])
+            : 12;
+        const int baseRy = beatSpaceCategoryAnchorsReady
+            ? juce::jmax(1, beatSpaceCategoryRegionRadiusY[static_cast<size_t>(assignedSpace)])
+            : 12;
+        const int searchRx = juce::jlimit(8, BeatSpaceTableSize - 1, baseRx * 3);
+        const int searchRy = juce::jlimit(8, BeatSpaceTableSize - 1, baseRy * 3);
+        const int minX = juce::jmax(0, searchCenter.x - searchRx);
+        const int maxX = juce::jmin(BeatSpaceTableSize - 1, searchCenter.x + searchRx);
+        const int minY = juce::jmax(0, searchCenter.y - searchRy);
+        const int maxY = juce::jmin(BeatSpaceTableSize - 1, searchCenter.y + searchRy);
+        const int preferredCluster = beatSpaceColorClustersReady
+            ? beatSpaceCategoryColorCluster[static_cast<size_t>(assignedSpace)]
+            : -1;
+
+        auto scanWindow = [&](bool requirePreferredCluster) -> bool
+        {
+            bool considered = false;
+            for (int y = minY; y <= maxY; ++y)
+            {
+                for (int x = minX; x <= maxX; ++x)
+                {
+                    const int tableIndex = (y * BeatSpaceTableSize) + x;
+                    if (tableIndex < 0 || tableIndex >= static_cast<int>(beatSpaceTable.size()))
+                        continue;
+                    if (requirePreferredCluster
+                        && preferredCluster >= 0
+                        && (tableIndex < 0
+                            || tableIndex >= static_cast<int>(beatSpaceColorClusters.size())
+                            || beatSpaceColorClusters[static_cast<size_t>(tableIndex)] != preferredCluster))
+                    {
+                        continue;
+                    }
+
+                    considered = true;
+                    const juce::Point<int> candidate { x, y };
+                    const float candidateScore = scoreCandidate(candidate);
+                    if (candidateScore > bestScore)
+                    {
+                        bestScore = candidateScore;
+                        sourcePoint = candidate;
+                    }
+                }
+            }
+            return considered;
+        };
+
+        bool consideredLocal = false;
+        if (preferredCluster >= 0)
+            consideredLocal = scanWindow(true);
+        if (!consideredLocal)
+            consideredLocal = scanWindow(false);
+
+        if (!consideredLocal)
+        {
+            for (int y = 0; y < BeatSpaceTableSize; ++y)
+            {
+                for (int x = 0; x < BeatSpaceTableSize; ++x)
+                {
+                    const juce::Point<int> candidate { x, y };
+                    const float candidateScore = scoreCandidate(candidate);
+                    if (candidateScore > bestScore)
+                    {
+                        bestScore = candidateScore;
+                        sourcePoint = candidate;
+                    }
+                }
+            }
+        }
+
+        beatSpaceChannelPoints[idx] = constrainBeatSpacePointForChannel(i, sourcePoint);
+        beatSpaceMorphStartPoints[idx] = beatSpaceChannelPoints[idx];
+        beatSpaceMorphTargetPoints[idx] = beatSpaceChannelPoints[idx];
+        beatSpaceMorphCurrentPoints[idx] = beatSpaceChannelPoints[idx];
+        beatSpaceMorphProgress[idx] = 1.0f;
+        beatSpaceMorphActive[idx] = false;
+    }
+
+    beatSpaceSelectedChannel = 0;
+    beatSpaceLinkAllChannels = false;
+}
+
+bool StepVstHostAudioProcessor::loadHostedInstrument(const juce::File& file, juce::String& error)
 {
     const double sampleRate = (currentSampleRate > 1.0) ? currentSampleRate : 44100.0;
     const int blockSize = juce::jmax(32, getBlockSize() > 0 ? getBlockSize() : 512);
-    return hostRack.loadPlugin(file, sampleRate, blockSize, error);
+    const bool loaded = hostRack.loadPlugin(file, sampleRate, blockSize, error);
+    if (loaded)
+    {
+        {
+            const juce::ScopedLock lock(hostedInstrumentFileLock);
+            loadedHostedInstrumentFile = file;
+        }
+        refreshBeatSpaceParameterMap();
+
+        if (auto* instance = hostRack.getInstance(); instance != nullptr)
+        {
+            auto dumpDir = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+                .getChildFile("step-vsthost");
+            dumpDir.createDirectory();
+            auto dumpFile = dumpDir.getChildFile("HostedInstrumentParameters.txt");
+            juce::StringArray lines;
+            lines.add("Plugin: " + instance->getName());
+            lines.add("File: " + file.getFullPathName());
+            lines.add("Total parameters: " + juce::String(instance->getParameters().size()));
+            lines.add("");
+            const auto& loadedParams = instance->getParameters();
+            for (int paramIndex = 0; paramIndex < static_cast<int>(loadedParams.size()); ++paramIndex)
+            {
+                const auto name = loadedParams[paramIndex]->getName(256);
+                lines.add(juce::String(paramIndex).paddedLeft('0', 4) + " : " + name);
+            }
+            dumpFile.replaceWithText(lines.joinIntoString("\n"));
+        }
+
+        if (auto* instance = hostRack.getInstance(); instance != nullptr
+            && isLikelyMicrotonicPlugin(instance->getName()))
+        {
+            applyBeatSpaceDefaultChannelLayout();
+            applyBeatSpacePointToChannels(true, false);
+        }
+    }
+    else
+    {
+        clearHostedDirectParameterMap();
+        beatSpaceMappingReady = false;
+        for (auto& ready : beatSpaceChannelMappingReady)
+            ready = false;
+    }
+    return loaded;
 }
 
-int MlrVSTAudioProcessor::getLaneMidiChannel(int stripIndex) const
+juce::File StepVstHostAudioProcessor::getLoadedHostedInstrumentFile() const
+{
+    const juce::ScopedLock lock(hostedInstrumentFileLock);
+    return loadedHostedInstrumentFile;
+}
+
+juce::File StepVstHostAudioProcessor::getDefaultHostedInstrumentFile() const
+{
+    const juce::ScopedLock lock(hostedInstrumentFileLock);
+    return defaultHostedInstrumentFile;
+}
+
+bool StepVstHostAudioProcessor::setLoadedHostedInstrumentAsDefault(juce::String& error)
+{
+    error.clear();
+    juce::File loadedFile;
+    {
+        const juce::ScopedLock lock(hostedInstrumentFileLock);
+        loadedFile = loadedHostedInstrumentFile;
+    }
+
+    if (loadedFile == juce::File())
+    {
+        error = "No hosted plugin is currently loaded.";
+        return false;
+    }
+
+    if (!loadedFile.exists())
+    {
+        error = "Hosted plugin file is missing: " + loadedFile.getFullPathName();
+        return false;
+    }
+
+    {
+        const juce::ScopedLock lock(hostedInstrumentFileLock);
+        defaultHostedInstrumentFile = loadedFile;
+    }
+    savePersistentControlPages();
+    return true;
+}
+
+bool StepVstHostAudioProcessor::loadDefaultHostedInstrumentIfNeeded(juce::String& error)
+{
+    error.clear();
+    if (hostedDefaultAutoLoadAttempted)
+        return hostRack.getInstance() != nullptr;
+
+    hostedDefaultAutoLoadAttempted = true;
+    if (hostRack.getInstance() != nullptr)
+        return true;
+
+    juce::File targetFile;
+    {
+        const juce::ScopedLock lock(hostedInstrumentFileLock);
+        targetFile = defaultHostedInstrumentFile;
+    }
+
+    if (targetFile == juce::File())
+        return false;
+
+    if (!targetFile.exists())
+    {
+        error = "Default hosted plugin missing: " + targetFile.getFullPathName();
+        return false;
+    }
+
+    return loadHostedInstrument(targetFile, error);
+}
+
+void StepVstHostAudioProcessor::rebuildBeatSpaceTablePreviewImage()
+{
+    beatSpaceTablePreviewImage = {};
+    beatSpaceConfidencePreviewImage = {};
+    if (beatSpaceTable.empty())
+        return;
+
+    const int tableCells = BeatSpaceTableSize * BeatSpaceTableSize;
+    const bool hasClusterData =
+        beatSpaceColorClustersReady
+        && static_cast<int>(beatSpaceColorClusters.size()) >= tableCells;
+
+    static constexpr std::array<uint32_t, BeatSpaceChannels> kCategoryPalette {
+        0xffea5455u, // Kick
+        0xfff07f3au, // Snare
+        0xff6bcf80u, // Closed hat
+        0xff4db6b8u, // Open hat
+        0xff5f8fd3u, // Perc
+        0xff9f7ccbu  // Misc
+    };
+    static constexpr std::array<uint32_t, BeatSpaceChannels> kFallbackClusterPalette {
+        0xfff06d6du,
+        0xfff2a74cu,
+        0xff7ed894u,
+        0xff5ec8c2u,
+        0xff6e9ee7u,
+        0xffb091e0u
+    };
+
+    auto clusterTintForCell = [&](int cluster) -> juce::Colour
+    {
+        for (int category = 0; category < BeatSpaceChannels; ++category)
+        {
+            if (beatSpaceCategoryColorCluster[static_cast<size_t>(category)] == cluster)
+                return juce::Colour(kCategoryPalette[static_cast<size_t>(category)]);
+        }
+        const auto fallback = static_cast<size_t>(
+            juce::jlimit(0, static_cast<int>(kFallbackClusterPalette.size()) - 1, cluster));
+        return juce::Colour(kFallbackClusterPalette[fallback]);
+    };
+
+    juce::Image preview(juce::Image::RGB, BeatSpaceTableSize, BeatSpaceTableSize, true);
+    preview.clear(preview.getBounds(), juce::Colours::black);
+
+    for (int y = 0; y < BeatSpaceTableSize; ++y)
+    {
+        for (int x = 0; x < BeatSpaceTableSize; ++x)
+        {
+            const auto& values = beatSpaceTable[static_cast<size_t>(y * BeatSpaceTableSize + x)].values;
+
+            float patchAverage = 0.0f;
+            for (int i = 0; i < BeatSpacePatchParamCount; ++i)
+                patchAverage += juce::jlimit(0.0f, 1.0f, values[static_cast<size_t>(i)]);
+            patchAverage /= static_cast<float>(BeatSpacePatchParamCount);
+
+            float trigCount = 0.0f;
+            float accentCount = 0.0f;
+            float fillCount = 0.0f;
+            for (int step = 0; step < 16; ++step)
+            {
+                const int idx = BeatSpacePatchParamCount + (step * 3);
+                trigCount += (values[static_cast<size_t>(idx)] >= 0.5f) ? 1.0f : 0.0f;
+                accentCount += (values[static_cast<size_t>(idx + 1)] >= 0.5f) ? 1.0f : 0.0f;
+                fillCount += (values[static_cast<size_t>(idx + 2)] >= 0.5f) ? 1.0f : 0.0f;
+            }
+
+            const float triggerDensity = trigCount / 16.0f;
+            const float accentDensity = accentCount / 16.0f;
+            const float fillDensity = fillCount / 16.0f;
+
+            const float hue = juce::jlimit(
+                0.0f,
+                1.0f,
+                0.08f
+                    + (0.44f * juce::jlimit(0.0f, 1.0f, values[0]))
+                    + (0.26f * juce::jlimit(0.0f, 1.0f, values[16]))
+                    + (0.12f * fillDensity));
+            const float saturation = juce::jlimit(0.28f, 0.98f, 0.34f + (0.50f * accentDensity) + (0.18f * fillDensity));
+            const float brightness = juce::jlimit(0.15f, 0.99f, 0.19f + (0.54f * patchAverage) + (0.27f * triggerDensity));
+
+            auto cellColour = juce::Colour::fromHSV(hue, saturation, brightness, 1.0f);
+            if (hasClusterData)
+            {
+                const int cellIndex = (y * BeatSpaceTableSize) + x;
+                const int cluster = juce::jlimit(
+                    0, BeatSpaceChannels - 1, beatSpaceColorClusters[static_cast<size_t>(cellIndex)]);
+                const auto clusterTint = clusterTintForCell(cluster);
+                const float hotspot = (cellIndex >= 0 && cellIndex < static_cast<int>(beatSpaceHotspotWeights.size()))
+                    ? juce::jlimit(0.0f, 1.0f, beatSpaceHotspotWeights[static_cast<size_t>(cellIndex)])
+                    : 0.0f;
+                const float tintAmount = juce::jlimit(0.18f, 0.48f, 0.24f + (0.22f * hotspot));
+                cellColour = cellColour.interpolatedWith(clusterTint, tintAmount).brighter(0.08f * hotspot);
+            }
+            preview.setPixelAt(x, y, cellColour);
+        }
+    }
+
+    // Smooth neighboring cells so the visual map reads like clustered regions
+    // instead of blocky single-cell noise at normal zoom levels.
+    juce::Image smoothed(preview.getFormat(), BeatSpaceTableSize, BeatSpaceTableSize, true);
+    for (int y = 0; y < BeatSpaceTableSize; ++y)
+    {
+        for (int x = 0; x < BeatSpaceTableSize; ++x)
+        {
+            float accumR = 0.0f;
+            float accumG = 0.0f;
+            float accumB = 0.0f;
+            float accumW = 0.0f;
+
+            for (int ny = -1; ny <= 1; ++ny)
+            {
+                for (int nx = -1; nx <= 1; ++nx)
+                {
+                    const int sx = x + nx;
+                    const int sy = y + ny;
+                    if (sx < 0 || sy < 0 || sx >= BeatSpaceTableSize || sy >= BeatSpaceTableSize)
+                        continue;
+
+                    const bool center = (nx == 0 && ny == 0);
+                    const float tapWeight = center ? 0.40f : ((nx == 0 || ny == 0) ? 0.11f : 0.07f);
+                    const auto c = preview.getPixelAt(sx, sy);
+                    accumR += c.getFloatRed() * tapWeight;
+                    accumG += c.getFloatGreen() * tapWeight;
+                    accumB += c.getFloatBlue() * tapWeight;
+                    accumW += tapWeight;
+                }
+            }
+
+            const float invWeight = (accumW > 0.0001f) ? (1.0f / accumW) : 1.0f;
+            smoothed.setPixelAt(
+                x,
+                y,
+                juce::Colour::fromFloatRGBA(
+                    juce::jlimit(0.0f, 1.0f, accumR * invWeight),
+                    juce::jlimit(0.0f, 1.0f, accumG * invWeight),
+                    juce::jlimit(0.0f, 1.0f, accumB * invWeight),
+                    1.0f));
+        }
+    }
+    for (int y = 0; y < BeatSpaceTableSize; ++y)
+    {
+        for (int x = 0; x < BeatSpaceTableSize; ++x)
+            preview.setPixelAt(x, y, smoothed.getPixelAt(x, y));
+    }
+
+    if (hasClusterData)
+    {
+        // Add subtle contour pixels at cluster boundaries so regions read clearly in the UI.
+        for (int y = 0; y < BeatSpaceTableSize; ++y)
+        {
+            for (int x = 0; x < BeatSpaceTableSize; ++x)
+            {
+                const int idx = (y * BeatSpaceTableSize) + x;
+                const int cluster = juce::jlimit(
+                    0, BeatSpaceChannels - 1, beatSpaceColorClusters[static_cast<size_t>(idx)]);
+
+                bool boundary = false;
+                if (x + 1 < BeatSpaceTableSize)
+                {
+                    const int rightCluster = juce::jlimit(
+                        0, BeatSpaceChannels - 1, beatSpaceColorClusters[static_cast<size_t>(idx + 1)]);
+                    boundary = boundary || (rightCluster != cluster);
+                }
+                if (y + 1 < BeatSpaceTableSize)
+                {
+                    const int downCluster = juce::jlimit(
+                        0, BeatSpaceChannels - 1,
+                        beatSpaceColorClusters[static_cast<size_t>(idx + BeatSpaceTableSize)]);
+                    boundary = boundary || (downCluster != cluster);
+                }
+                if (!boundary)
+                    continue;
+
+                auto c = preview.getPixelAt(x, y);
+                c = c.darker(0.30f).withMultipliedSaturation(0.85f);
+                preview.setPixelAt(x, y, c);
+            }
+        }
+    }
+
+    beatSpaceTablePreviewImage = preview;
+
+    juce::Image confidence(juce::Image::ARGB, BeatSpaceTableSize, BeatSpaceTableSize, true);
+    confidence.clear(confidence.getBounds(), juce::Colours::transparentBlack);
+    const bool hasHotspots = static_cast<int>(beatSpaceHotspotWeights.size()) >= tableCells;
+
+    for (int y = 0; y < BeatSpaceTableSize; ++y)
+    {
+        for (int x = 0; x < BeatSpaceTableSize; ++x)
+        {
+            const int idx = (y * BeatSpaceTableSize) + x;
+            float hotspot = hasHotspots
+                ? juce::jlimit(0.0f, 1.0f, beatSpaceHotspotWeights[static_cast<size_t>(idx)])
+                : 0.45f;
+
+            float neighborAgreement = 0.5f;
+            if (hasClusterData)
+            {
+                const int c = juce::jlimit(
+                    0, BeatSpaceChannels - 1, beatSpaceColorClusters[static_cast<size_t>(idx)]);
+                int same = 0;
+                int total = 0;
+                const auto checkNeighbor = [&](int nx, int ny)
+                {
+                    if (nx < 0 || ny < 0 || nx >= BeatSpaceTableSize || ny >= BeatSpaceTableSize)
+                        return;
+                    ++total;
+                    const int nIdx = (ny * BeatSpaceTableSize) + nx;
+                    const int nc = juce::jlimit(
+                        0, BeatSpaceChannels - 1, beatSpaceColorClusters[static_cast<size_t>(nIdx)]);
+                    if (nc == c)
+                        ++same;
+                };
+                checkNeighbor(x - 1, y);
+                checkNeighbor(x + 1, y);
+                checkNeighbor(x, y - 1);
+                checkNeighbor(x, y + 1);
+                if (total > 0)
+                    neighborAgreement = static_cast<float>(same) / static_cast<float>(total);
+            }
+
+            const float confidenceValue = juce::jlimit(
+                0.0f,
+                1.0f,
+                0.12f + (0.68f * hotspot) + (0.20f * neighborAgreement));
+            const auto pixel = juce::Colour::fromRGBA(
+                static_cast<uint8_t>(std::round(confidenceValue * 255.0f)),
+                static_cast<uint8_t>(std::round(confidenceValue * 255.0f)),
+                static_cast<uint8_t>(std::round(confidenceValue * 255.0f)),
+                255);
+            confidence.setPixelAt(x, y, pixel);
+        }
+    }
+
+    beatSpaceConfidencePreviewImage = confidence;
+}
+
+void StepVstHostAudioProcessor::rebuildBeatSpaceColorClusters(
+    const juce::File& scriptDir, const juce::String& decoderName)
+{
+    const int tableCells = BeatSpaceTableSize * BeatSpaceTableSize;
+    beatSpaceColorClusters.assign(static_cast<size_t>(tableCells), -1);
+    beatSpaceHotspotWeights.assign(static_cast<size_t>(tableCells), 0.0f);
+    beatSpaceCategoryColorCluster.fill(-1);
+    beatSpaceColorClustersReady = false;
+
+    if (beatSpaceTable.empty())
+        return;
+
+    juce::StringArray mapCandidates;
+    if (decoderName.isNotEmpty())
+    {
+        mapCandidates.addIfNotAlreadyThere(decoderName + "_map_x2.png");
+        mapCandidates.addIfNotAlreadyThere(decoderName + "_map.png");
+    }
+    mapCandidates.addIfNotAlreadyThere("marigoldG_map_x2.png");
+    mapCandidates.addIfNotAlreadyThere("marigoldG_map.png");
+
+    juce::File mapFile;
+    for (const auto& candidate : mapCandidates)
+    {
+        auto file = scriptDir.getChildFile(candidate);
+        if (file.existsAsFile())
+        {
+            mapFile = file;
+            break;
+        }
+    }
+    if (mapFile == juce::File())
+        return;
+
+    auto mapImage = juce::ImageFileFormat::loadFrom(mapFile);
+    if (!mapImage.isValid() || mapImage.getWidth() < 2 || mapImage.getHeight() < 2)
+        return;
+
+    struct ColorFeature
+    {
+        float hueX = 0.0f;
+        float hueY = 0.0f;
+        float value = 0.0f;
+    };
+
+    auto squaredDistance = [](const ColorFeature& a, const ColorFeature& b)
+    {
+        const float dx = a.hueX - b.hueX;
+        const float dy = a.hueY - b.hueY;
+        const float dv = a.value - b.value;
+        return (dx * dx) + (dy * dy) + (dv * dv);
+    };
+
+    std::vector<ColorFeature> features(static_cast<size_t>(tableCells));
+    constexpr float kTwoPi = 6.28318530717958647692f;
+
+    for (int y = 0; y < BeatSpaceTableSize; ++y)
+    {
+        for (int x = 0; x < BeatSpaceTableSize; ++x)
+        {
+            const int cellIndex = (y * BeatSpaceTableSize) + x;
+            const int imgX = juce::jlimit(
+                0, mapImage.getWidth() - 1,
+                static_cast<int>(std::round((static_cast<float>(x) / static_cast<float>(juce::jmax(1, BeatSpaceTableSize - 1)))
+                                            * static_cast<float>(mapImage.getWidth() - 1))));
+            const int imgY = juce::jlimit(
+                0, mapImage.getHeight() - 1,
+                static_cast<int>(std::round((static_cast<float>(y) / static_cast<float>(juce::jmax(1, BeatSpaceTableSize - 1)))
+                                            * static_cast<float>(mapImage.getHeight() - 1))));
+
+            const auto pixel = mapImage.getPixelAt(imgX, imgY);
+            const float hue = pixel.getHue();
+            const float sat = pixel.getSaturation();
+            const float value = pixel.getBrightness();
+            const float angle = hue * kTwoPi;
+
+            auto& feature = features[static_cast<size_t>(cellIndex)];
+            feature.hueX = std::cos(angle) * sat;
+            feature.hueY = std::sin(angle) * sat;
+            feature.value = value;
+
+            const float hotspot = juce::jlimit(0.0f, 1.0f, (value - 0.20f) / 0.80f);
+            beatSpaceHotspotWeights[static_cast<size_t>(cellIndex)] = hotspot * hotspot;
+        }
+    }
+
+    constexpr int kClusters = BeatSpaceChannels;
+    std::array<ColorFeature, kClusters> centers{};
+    const int lastFeatureIndex = juce::jmax(0, tableCells - 1);
+    for (int c = 0; c < kClusters; ++c)
+    {
+        const int pick = (c * lastFeatureIndex) / juce::jmax(1, kClusters - 1);
+        centers[static_cast<size_t>(c)] = features[static_cast<size_t>(pick)];
+    }
+
+    std::vector<int> assignments(static_cast<size_t>(tableCells), 0);
+    for (int iter = 0; iter < 12; ++iter)
+    {
+        bool anyChange = false;
+        std::array<ColorFeature, kClusters> sums{};
+        std::array<int, kClusters> counts{};
+        counts.fill(0);
+
+        for (int idx = 0; idx < tableCells; ++idx)
+        {
+            const auto& feature = features[static_cast<size_t>(idx)];
+            float bestDistance = std::numeric_limits<float>::max();
+            int bestCluster = 0;
+            for (int c = 0; c < kClusters; ++c)
+            {
+                const float d = squaredDistance(feature, centers[static_cast<size_t>(c)]);
+                if (d < bestDistance)
+                {
+                    bestDistance = d;
+                    bestCluster = c;
+                }
+            }
+
+            if (assignments[static_cast<size_t>(idx)] != bestCluster)
+            {
+                assignments[static_cast<size_t>(idx)] = bestCluster;
+                anyChange = true;
+            }
+
+            auto& sum = sums[static_cast<size_t>(bestCluster)];
+            sum.hueX += feature.hueX;
+            sum.hueY += feature.hueY;
+            sum.value += feature.value;
+            ++counts[static_cast<size_t>(bestCluster)];
+        }
+
+        for (int c = 0; c < kClusters; ++c)
+        {
+            const int count = counts[static_cast<size_t>(c)];
+            if (count > 0)
+            {
+                const float inv = 1.0f / static_cast<float>(count);
+                auto& center = centers[static_cast<size_t>(c)];
+                center.hueX = sums[static_cast<size_t>(c)].hueX * inv;
+                center.hueY = sums[static_cast<size_t>(c)].hueY * inv;
+                center.value = sums[static_cast<size_t>(c)].value * inv;
+                continue;
+            }
+
+            int farthestIdx = 0;
+            float farthestDist = -1.0f;
+            for (int idx = 0; idx < tableCells; ++idx)
+            {
+                const int owner = assignments[static_cast<size_t>(idx)];
+                const float dist = squaredDistance(
+                    features[static_cast<size_t>(idx)],
+                    centers[static_cast<size_t>(owner)]);
+                if (dist > farthestDist)
+                {
+                    farthestDist = dist;
+                    farthestIdx = idx;
+                }
+            }
+            centers[static_cast<size_t>(c)] = features[static_cast<size_t>(farthestIdx)];
+        }
+
+        if (!anyChange && iter > 0)
+            break;
+    }
+
+    std::array<std::array<float, BeatSpaceVectorSize>, kClusters> clusterMeans{};
+    std::array<float, kClusters> clusterHotspotSum{};
+    std::array<int, kClusters> clusterCounts{};
+    clusterHotspotSum.fill(0.0f);
+    clusterCounts.fill(0);
+
+    for (int idx = 0; idx < tableCells; ++idx)
+    {
+        const int cluster = juce::jlimit(0, kClusters - 1, assignments[static_cast<size_t>(idx)]);
+        beatSpaceColorClusters[static_cast<size_t>(idx)] = cluster;
+        ++clusterCounts[static_cast<size_t>(cluster)];
+        clusterHotspotSum[static_cast<size_t>(cluster)] += beatSpaceHotspotWeights[static_cast<size_t>(idx)];
+
+        const auto& values = beatSpaceTable[static_cast<size_t>(idx)].values;
+        auto& mean = clusterMeans[static_cast<size_t>(cluster)];
+        for (int i = 0; i < BeatSpaceVectorSize; ++i)
+            mean[static_cast<size_t>(i)] += values[static_cast<size_t>(i)];
+    }
+
+    for (int c = 0; c < kClusters; ++c)
+    {
+        const int count = clusterCounts[static_cast<size_t>(c)];
+        if (count <= 0)
+            continue;
+        const float inv = 1.0f / static_cast<float>(count);
+        auto& mean = clusterMeans[static_cast<size_t>(c)];
+        for (auto& v : mean)
+            v *= inv;
+        clusterHotspotSum[static_cast<size_t>(c)] *= inv;
+    }
+
+    std::array<bool, kClusters> clusterUsed{};
+    clusterUsed.fill(false);
+    for (int category = 0; category < BeatSpaceChannels; ++category)
+    {
+        float bestScore = -1.0e9f;
+        int bestCluster = -1;
+        for (int c = 0; c < kClusters; ++c)
+        {
+            if (clusterUsed[static_cast<size_t>(c)] || clusterCounts[static_cast<size_t>(c)] <= 0)
+                continue;
+
+            float score = scoreBeatSpaceCategoryPoint(category, clusterMeans[static_cast<size_t>(c)]);
+            score += 0.22f * clusterHotspotSum[static_cast<size_t>(c)];
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestCluster = c;
+            }
+        }
+
+        if (bestCluster < 0)
+        {
+            for (int c = 0; c < kClusters; ++c)
+            {
+                if (!clusterUsed[static_cast<size_t>(c)] && clusterCounts[static_cast<size_t>(c)] > 0)
+                {
+                    bestCluster = c;
+                    break;
+                }
+            }
+        }
+
+        if (bestCluster >= 0)
+        {
+            beatSpaceCategoryColorCluster[static_cast<size_t>(category)] = bestCluster;
+            clusterUsed[static_cast<size_t>(bestCluster)] = true;
+        }
+    }
+
+    beatSpaceColorClustersReady = true;
+}
+
+void StepVstHostAudioProcessor::rebuildBeatSpaceCategoryAnchors()
+{
+    beatSpaceCategoryAnchorsReady = false;
+    if (beatSpaceTable.empty())
+        return;
+
+    constexpr int kMinSpacing = 8;
+    static constexpr std::array<int, BeatSpaceChannels> kDefaultRegionRx { 10, 10, 9, 9, 12, 12 };
+    static constexpr std::array<int, BeatSpaceChannels> kDefaultRegionRy { 10, 10, 9, 9, 11, 11 };
+    std::array<juce::Point<int>, BeatSpaceChannels> selectedAnchors{};
+    std::array<bool, BeatSpaceChannels> selectedValid{};
+    selectedValid.fill(false);
+    auto clampPoint = [](const juce::Point<int>& p)
+    {
+        return juce::Point<int> {
+            juce::jlimit(0, BeatSpaceTableSize - 1, p.x),
+            juce::jlimit(0, BeatSpaceTableSize - 1, p.y)
+        };
+    };
+
+    for (int category = 0; category < BeatSpaceChannels; ++category)
+    {
+        if (beatSpaceCategoryAnchorManual[static_cast<size_t>(category)])
+        {
+            const auto manualPoint = clampPoint(beatSpaceCategoryManualAnchors[static_cast<size_t>(category)]);
+            beatSpaceCategoryManualAnchors[static_cast<size_t>(category)] = manualPoint;
+            selectedAnchors[static_cast<size_t>(category)] = manualPoint;
+            selectedValid[static_cast<size_t>(category)] = true;
+
+            if (beatSpaceColorClustersReady)
+            {
+                const int tableIndex = (manualPoint.y * BeatSpaceTableSize) + manualPoint.x;
+                if (tableIndex >= 0 && tableIndex < static_cast<int>(beatSpaceColorClusters.size()))
+                    beatSpaceCategoryColorCluster[static_cast<size_t>(category)] =
+                        beatSpaceColorClusters[static_cast<size_t>(tableIndex)];
+            }
+            continue;
+        }
+
+        const int preferredCluster = beatSpaceColorClustersReady
+            ? beatSpaceCategoryColorCluster[static_cast<size_t>(category)]
+            : -1;
+
+        float bestScore = -1.0e9f;
+        juce::Point<int> bestPoint { BeatSpaceTableSize / 2, BeatSpaceTableSize / 2 };
+        int consideredPoints = 0;
+
+        auto scanPoints = [&](bool clusterOnly)
+        {
+            for (int y = 0; y < BeatSpaceTableSize; ++y)
+            {
+                for (int x = 0; x < BeatSpaceTableSize; ++x)
+                {
+                    const int tableIndex = (y * BeatSpaceTableSize) + x;
+                    if (clusterOnly && preferredCluster >= 0)
+                    {
+                        if (tableIndex < 0
+                            || tableIndex >= static_cast<int>(beatSpaceColorClusters.size())
+                            || beatSpaceColorClusters[static_cast<size_t>(tableIndex)] != preferredCluster)
+                            continue;
+                    }
+
+                    float score = scoreBeatSpaceCategoryPoint(
+                        category,
+                        beatSpaceTable[static_cast<size_t>(tableIndex)].values);
+
+                    if (tableIndex >= 0 && tableIndex < static_cast<int>(beatSpaceHotspotWeights.size()))
+                        score += 0.18f * beatSpaceHotspotWeights[static_cast<size_t>(tableIndex)];
+
+                    // Manual tags guide the analysis: same-category proximity is rewarded,
+                    // cross-category proximity is penalized to keep regions separated.
+                    for (int manualCategory = 0; manualCategory < BeatSpaceChannels; ++manualCategory)
+                    {
+                        if (!beatSpaceCategoryAnchorManual[static_cast<size_t>(manualCategory)])
+                            continue;
+
+                        const auto tagPoint = clampPoint(
+                            beatSpaceCategoryManualAnchors[static_cast<size_t>(manualCategory)]);
+                        const float dxTag = static_cast<float>(x - tagPoint.x);
+                        const float dyTag = static_cast<float>(y - tagPoint.y);
+                        const float distTag = std::sqrt((dxTag * dxTag) + (dyTag * dyTag));
+                        const float proximity = juce::jlimit(0.0f, 1.0f, 1.0f - (distTag / 24.0f));
+                        if (manualCategory == category)
+                            score += 0.22f * proximity;
+                        else
+                            score -= 0.07f * proximity;
+                    }
+
+                    for (int prev = 0; prev < category; ++prev)
+                    {
+                        if (!selectedValid[static_cast<size_t>(prev)])
+                            continue;
+                        const auto p = selectedAnchors[static_cast<size_t>(prev)];
+                        const float dx = static_cast<float>(x - p.x);
+                        const float dy = static_cast<float>(y - p.y);
+                        const float spacingDist = std::sqrt((dx * dx) + (dy * dy));
+                        if (spacingDist < static_cast<float>(kMinSpacing))
+                            score -= (static_cast<float>(kMinSpacing) - spacingDist) * 0.085f;
+                    }
+
+                    ++consideredPoints;
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestPoint = { x, y };
+                    }
+                }
+            }
+        };
+
+        scanPoints(preferredCluster >= 0);
+        if (consideredPoints == 0 && preferredCluster >= 0)
+            scanPoints(false);
+
+        selectedAnchors[static_cast<size_t>(category)] = bestPoint;
+        selectedValid[static_cast<size_t>(category)] = (consideredPoints > 0);
+    }
+
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+        beatSpaceCategoryAnchors[static_cast<size_t>(i)] = selectedAnchors[static_cast<size_t>(i)];
+
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+    {
+        beatSpaceCategoryRegionRadiusX[static_cast<size_t>(i)] = kDefaultRegionRx[static_cast<size_t>(i)];
+        beatSpaceCategoryRegionRadiusY[static_cast<size_t>(i)] = kDefaultRegionRy[static_cast<size_t>(i)];
+    }
+
+    if (beatSpaceColorClustersReady)
+    {
+        for (int category = 0; category < BeatSpaceChannels; ++category)
+        {
+            int cluster = beatSpaceCategoryColorCluster[static_cast<size_t>(category)];
+            if (cluster < 0 && beatSpaceCategoryAnchorManual[static_cast<size_t>(category)])
+            {
+                const auto p = clampPoint(beatSpaceCategoryManualAnchors[static_cast<size_t>(category)]);
+                const int tableIndex = (p.y * BeatSpaceTableSize) + p.x;
+                if (tableIndex >= 0 && tableIndex < static_cast<int>(beatSpaceColorClusters.size()))
+                    cluster = beatSpaceColorClusters[static_cast<size_t>(tableIndex)];
+                beatSpaceCategoryColorCluster[static_cast<size_t>(category)] = cluster;
+            }
+
+            if (cluster < 0)
+                continue;
+
+            int minX = BeatSpaceTableSize - 1;
+            int maxX = 0;
+            int minY = BeatSpaceTableSize - 1;
+            int maxY = 0;
+            int count = 0;
+
+            for (int y = 0; y < BeatSpaceTableSize; ++y)
+            {
+                for (int x = 0; x < BeatSpaceTableSize; ++x)
+                {
+                    const int tableIndex = (y * BeatSpaceTableSize) + x;
+                    if (tableIndex < 0 || tableIndex >= static_cast<int>(beatSpaceColorClusters.size()))
+                        continue;
+                    if (beatSpaceColorClusters[static_cast<size_t>(tableIndex)] != cluster)
+                        continue;
+
+                    minX = juce::jmin(minX, x);
+                    maxX = juce::jmax(maxX, x);
+                    minY = juce::jmin(minY, y);
+                    maxY = juce::jmax(maxY, y);
+                    ++count;
+                }
+            }
+
+            if (count > 0)
+            {
+                const int spanX = juce::jmax(1, maxX - minX + 1);
+                const int spanY = juce::jmax(1, maxY - minY + 1);
+                beatSpaceCategoryRegionRadiusX[static_cast<size_t>(category)] =
+                    juce::jlimit(5, 20, static_cast<int>(std::round(static_cast<float>(spanX) * 0.30f)));
+                beatSpaceCategoryRegionRadiusY[static_cast<size_t>(category)] =
+                    juce::jlimit(5, 20, static_cast<int>(std::round(static_cast<float>(spanY) * 0.30f)));
+            }
+        }
+    }
+
+    beatSpaceCategoryAnchorsReady = true;
+    rebuildBeatSpaceCategoryPresetPoints();
+}
+
+void StepVstHostAudioProcessor::rebuildBeatSpaceCategoryPresetPoints()
+{
+    for (auto& ready : beatSpaceCategoryPresetPointsReady)
+        ready = false;
+
+    if (beatSpaceTable.empty())
+        return;
+
+    auto clampPoint = [](const juce::Point<int>& p)
+    {
+        return juce::Point<int> {
+            juce::jlimit(0, BeatSpaceTableSize - 1, p.x),
+            juce::jlimit(0, BeatSpaceTableSize - 1, p.y)
+        };
+    };
+
+    struct CandidatePoint
+    {
+        juce::Point<int> point;
+        float score = 0.0f;
+    };
+
+    constexpr int kTopCandidates = 640;
+
+    for (int category = 0; category < BeatSpaceChannels; ++category)
+    {
+        const auto catIdx = static_cast<size_t>(category);
+        const auto anchor = clampPoint(beatSpaceCategoryAnchors[catIdx]);
+        const int rx = juce::jmax(1, beatSpaceCategoryRegionRadiusX[catIdx]);
+        const int ry = juce::jmax(1, beatSpaceCategoryRegionRadiusY[catIdx]);
+        const int preferredCluster = beatSpaceColorClustersReady ? beatSpaceCategoryColorCluster[catIdx] : -1;
+
+        std::vector<CandidatePoint> candidates;
+        candidates.reserve(static_cast<size_t>(BeatSpaceTableSize * BeatSpaceTableSize));
+
+        for (int y = 0; y < BeatSpaceTableSize; ++y)
+        {
+            for (int x = 0; x < BeatSpaceTableSize; ++x)
+            {
+                const int tableIndex = (y * BeatSpaceTableSize) + x;
+                if (tableIndex < 0 || tableIndex >= static_cast<int>(beatSpaceTable.size()))
+                    continue;
+
+                const auto& cellValues = beatSpaceTable[static_cast<size_t>(tableIndex)].values;
+                const float ownCategoryScore = scoreBeatSpaceCategoryPoint(category, cellValues);
+                float bestOtherCategoryScore = -1.0e9f;
+                for (int other = 0; other < BeatSpaceChannels; ++other)
+                {
+                    if (other == category)
+                        continue;
+                    bestOtherCategoryScore = juce::jmax(
+                        bestOtherCategoryScore,
+                        scoreBeatSpaceCategoryPoint(other, cellValues));
+                }
+                const float margin = ownCategoryScore - bestOtherCategoryScore;
+                const float confidence = juce::jlimit(0.0f, 1.0f, (margin + 0.22f) / 0.66f);
+                float score = ownCategoryScore + (0.32f * confidence);
+
+                if (tableIndex < static_cast<int>(beatSpaceHotspotWeights.size()))
+                    score += 0.18f * beatSpaceHotspotWeights[static_cast<size_t>(tableIndex)];
+
+                if (preferredCluster >= 0
+                    && tableIndex < static_cast<int>(beatSpaceColorClusters.size()))
+                {
+                    if (beatSpaceColorClusters[static_cast<size_t>(tableIndex)] == preferredCluster)
+                        score += 0.12f;
+                    else
+                        score -= 0.05f;
+                }
+
+                const float dxNorm = std::abs(static_cast<float>(x - anchor.x))
+                    / static_cast<float>(juce::jmax(1, rx));
+                const float dyNorm = std::abs(static_cast<float>(y - anchor.y))
+                    / static_cast<float>(juce::jmax(1, ry));
+                const float regionDist = std::sqrt((dxNorm * dxNorm) + (dyNorm * dyNorm));
+                score += juce::jlimit(-0.24f, 0.24f, 0.22f - (0.12f * regionDist));
+
+                for (int manualCategory = 0; manualCategory < BeatSpaceChannels; ++manualCategory)
+                {
+                    const auto manualIdx = static_cast<size_t>(manualCategory);
+                    const int manualCount = juce::jlimit(
+                        0,
+                        BeatSpacePresetSlotsPerSpace,
+                        beatSpaceCategoryManualTagCounts[manualIdx]);
+                    if (manualCount <= 0)
+                        continue;
+
+                    float strongestProximity = 0.0f;
+                    for (int tagIndex = 0; tagIndex < manualCount; ++tagIndex)
+                    {
+                        const auto tagPoint = clampPoint(
+                            beatSpaceCategoryManualTagPoints[manualIdx][static_cast<size_t>(tagIndex)]);
+                        const float tagDx = static_cast<float>(x - tagPoint.x);
+                        const float tagDy = static_cast<float>(y - tagPoint.y);
+                        const float tagDist = std::sqrt((tagDx * tagDx) + (tagDy * tagDy));
+                        strongestProximity = juce::jmax(
+                            strongestProximity,
+                            juce::jlimit(0.0f, 1.0f, 1.0f - (tagDist / 20.0f)));
+                    }
+                    if (manualCategory == category)
+                        score += 0.26f * strongestProximity;
+                    else
+                        score -= 0.10f * strongestProximity;
+                }
+
+                const bool insideRegion = (x >= (anchor.x - rx))
+                    && (x <= (anchor.x + rx))
+                    && (y >= (anchor.y - ry))
+                    && (y <= (anchor.y + ry));
+                if (!insideRegion)
+                    score -= 0.08f;
+
+                candidates.push_back({ { x, y }, score });
+            }
+        }
+
+        if (candidates.empty())
+        {
+            beatSpaceCategoryPresetPoints[catIdx].fill(anchor);
+            continue;
+        }
+
+        std::sort(
+            candidates.begin(),
+            candidates.end(),
+            [](const CandidatePoint& a, const CandidatePoint& b)
+            {
+                if (std::abs(a.score - b.score) > 1.0e-6f)
+                    return a.score > b.score;
+                if (a.point.y == b.point.y)
+                    return a.point.x < b.point.x;
+                return a.point.y < b.point.y;
+            });
+
+        if (candidates.size() > static_cast<size_t>(kTopCandidates))
+            candidates.resize(static_cast<size_t>(kTopCandidates));
+
+        std::vector<CandidatePoint> selected;
+        selected.reserve(BeatSpacePresetSlotsPerSpace);
+        const int manualCount = juce::jlimit(
+            0,
+            BeatSpacePresetSlotsPerSpace,
+            beatSpaceCategoryManualTagCounts[catIdx]);
+        if (manualCount > 0)
+        {
+            const auto& manualTags = beatSpaceCategoryManualTagPoints[catIdx];
+            for (int i = 0; i < manualCount; ++i)
+            {
+                const auto p = clampPoint(manualTags[static_cast<size_t>(i)]);
+                bool duplicate = false;
+                for (const auto& s : selected)
+                {
+                    if (s.point == p)
+                    {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (duplicate)
+                    continue;
+                selected.push_back({ p, 2.5f + static_cast<float>(manualCount - i) * 0.05f });
+                if (selected.size() >= static_cast<size_t>(BeatSpacePresetSlotsPerSpace))
+                    break;
+            }
+        }
+
+        if (selected.empty())
+            selected.push_back(candidates.front());
+
+        while (selected.size() < static_cast<size_t>(BeatSpacePresetSlotsPerSpace)
+               && selected.size() < candidates.size())
+        {
+            float bestPickScore = -1.0e9f;
+            size_t bestIndex = 0;
+
+            for (size_t i = 0; i < candidates.size(); ++i)
+            {
+                const auto& cand = candidates[i];
+                bool alreadySelected = false;
+                for (const auto& s : selected)
+                {
+                    if (s.point == cand.point)
+                    {
+                        alreadySelected = true;
+                        break;
+                    }
+                }
+                if (alreadySelected)
+                    continue;
+
+                float minDistance = std::numeric_limits<float>::max();
+                for (const auto& s : selected)
+                {
+                    const float dx = static_cast<float>(cand.point.x - s.point.x);
+                    const float dy = static_cast<float>(cand.point.y - s.point.y);
+                    minDistance = juce::jmin(minDistance, std::sqrt((dx * dx) + (dy * dy)));
+                }
+                if (!std::isfinite(minDistance))
+                    minDistance = 0.0f;
+
+                const float diversity = juce::jlimit(0.0f, 1.0f, minDistance / 26.0f);
+                const float pickScore = cand.score + (0.24f * diversity);
+                if (pickScore > bestPickScore)
+                {
+                    bestPickScore = pickScore;
+                    bestIndex = i;
+                }
+            }
+
+            selected.push_back(candidates[bestIndex]);
+        }
+
+        if (selected.empty())
+            selected.push_back({ anchor, 0.0f });
+
+        std::sort(
+            selected.begin(),
+            selected.end(),
+            [](const CandidatePoint& a, const CandidatePoint& b)
+            {
+                if (a.point.y == b.point.y)
+                    return a.point.x < b.point.x;
+                return a.point.y < b.point.y;
+            });
+
+        auto& presetPoints = beatSpaceCategoryPresetPoints[catIdx];
+        for (int slot = 0; slot < BeatSpacePresetSlotsPerSpace; ++slot)
+        {
+            const auto sourceIndex = static_cast<size_t>(
+                juce::jlimit(0, static_cast<int>(selected.size()) - 1, slot));
+            presetPoints[static_cast<size_t>(slot)] = clampPoint(selected[sourceIndex].point);
+        }
+        beatSpaceCategoryPresetPointsReady[catIdx] = true;
+    }
+}
+
+bool StepVstHostAudioProcessor::initializeBeatSpaceTable()
+{
+    beatSpaceTable.clear();
+    beatSpaceTablePreviewImage = {};
+    beatSpaceCategoryAnchorsReady = false;
+    beatSpaceColorClustersReady = false;
+    beatSpaceColorClusters.clear();
+    beatSpaceHotspotWeights.clear();
+    beatSpaceCategoryColorCluster.fill(-1);
+    beatSpaceCategoryManualTagCounts.fill(0);
+    for (auto& tags : beatSpaceCategoryManualTagPoints)
+        tags.fill({ BeatSpaceTableSize / 2, BeatSpaceTableSize / 2 });
+    beatSpaceCategoryAnchorManual.fill(false);
+    beatSpaceCategoryPresetPointsReady.fill(false);
+    beatSpaceLinkedOffsetsReady = false;
+    for (auto& offset : beatSpaceLinkedOffsets)
+        offset = { 0.0f, 0.0f };
+    beatSpaceDecoderReady = false;
+
+    const auto scriptDir = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+        .getChildFile("Library")
+        .getChildFile("Application Support")
+        .getChildFile("Sonic Charge")
+        .getChildFile("Microtonic Scripts")
+        .getChildFile("BeatSpace.mtscript");
+    const auto decoderFile = scriptDir.getChildFile("marigoldG_decoder.nuxnn.base64");
+
+    if (!decoderFile.existsAsFile())
+    {
+        beatSpaceStatusMessage = "BeatSpace decoder not found";
+        return false;
+    }
+
+    const auto base64Text = decoderFile.loadFileAsString();
+    if (base64Text.isEmpty())
+    {
+        beatSpaceStatusMessage = "BeatSpace decoder empty";
+        return false;
+    }
+
+    juce::MemoryOutputStream decodedStream;
+    if (!juce::Base64::convertFromBase64(decodedStream, base64Text))
+    {
+        beatSpaceStatusMessage = "BeatSpace decoder base64 parse failed";
+        return false;
+    }
+
+    const auto decodedBlock = decodedStream.getMemoryBlock();
+    if (decodedBlock.getSize() == 0)
+    {
+        beatSpaceStatusMessage = "BeatSpace decoder payload empty";
+        return false;
+    }
+
+    std::vector<uint8_t> bytes(decodedBlock.getSize());
+    std::memcpy(bytes.data(), decodedBlock.getData(), decodedBlock.getSize());
+    const auto model = parseNuXnnModel(bytes);
+    if (!model.valid || model.inputSize < 2 || model.outputSize < BeatSpaceVectorSize)
+    {
+        beatSpaceStatusMessage = "BeatSpace decoder format unsupported";
+        return false;
+    }
+
+    beatSpaceTable.resize(static_cast<size_t>(BeatSpaceTableSize * BeatSpaceTableSize));
+    for (int y = 0; y < BeatSpaceTableSize; ++y)
+    {
+        for (int x = 0; x < BeatSpaceTableSize; ++x)
+        {
+            const float tx = static_cast<float>(x) / static_cast<float>(juce::jmax(1, BeatSpaceTableSize - 1));
+            const float ty = static_cast<float>(y) / static_cast<float>(juce::jmax(1, BeatSpaceTableSize - 1));
+            const std::vector<float> latentIn {
+                (tx * 2.0f) - 1.0f,
+                (ty * 2.0f) - 1.0f
+            };
+            auto raw = model.rootEval(latentIn);
+            beatSpaceTable[static_cast<size_t>(y * BeatSpaceTableSize + x)].values =
+                postProcessBeatSpaceVector(raw);
+        }
+    }
+
+    beatSpaceDecoderName = model.name.isNotEmpty() ? model.name : "marigoldG";
+    rebuildBeatSpaceColorClusters(scriptDir, beatSpaceDecoderName);
+    rebuildBeatSpaceCategoryAnchors();
+    rebuildBeatSpaceTablePreviewImage();
+    beatSpaceDecoderReady = true;
+    beatSpaceStatusMessage = beatSpaceColorClustersReady
+        ? "BeatSpace table loaded (4096 x 73, color clusters + hotspots)"
+        : "BeatSpace table loaded (4096 x 73)";
+    return true;
+}
+
+void StepVstHostAudioProcessor::clearHostedDirectParameterMap()
+{
+    for (int i = 0; i < MaxStrips; ++i)
+    {
+        const auto idx = static_cast<size_t>(i);
+        hostedDirectParamVolume[idx] = -1;
+        hostedDirectParamPan[idx] = -1;
+        hostedDirectParamPitch[idx] = -1;
+        hostedDirectParamAttack[idx] = -1;
+        hostedDirectParamDecay[idx] = -1;
+        hostedDirectParamRelease[idx] = -1;
+        hostedDirectParamAttackAux[idx] = -1;
+        hostedLastDirectParamVolume[idx] = -1.0f;
+        hostedLastDirectParamPan[idx] = -1.0f;
+        hostedLastDirectParamPitch[idx] = -1.0f;
+        hostedLastDirectParamAttack[idx] = -1.0f;
+        hostedLastDirectParamDecay[idx] = -1.0f;
+        hostedLastDirectParamRelease[idx] = -1.0f;
+        hostedLastDirectParamAttackAux[idx] = -1.0f;
+    }
+}
+
+void StepVstHostAudioProcessor::refreshHostedDirectParameterMapFromBeatSpace(bool likelyMicrotonic)
+{
+    clearHostedDirectParameterMap();
+    if (!likelyMicrotonic)
+        return;
+
+    for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+    {
+        const auto idx = static_cast<size_t>(channel);
+        hostedDirectParamVolume[idx] = beatSpaceParamMap[idx][static_cast<size_t>(kMicrotonicPatchLevelIndex)];
+        hostedDirectParamPan[idx] = beatSpaceParamMap[idx][static_cast<size_t>(kMicrotonicPatchPanIndex)];
+        hostedDirectParamPitch[idx] = beatSpaceParamMap[idx][static_cast<size_t>(kMicrotonicPatchOscFreqIndex)];
+        hostedDirectParamAttack[idx] = beatSpaceParamMap[idx][static_cast<size_t>(kMicrotonicPatchOscAtkIndex)];
+        hostedDirectParamDecay[idx] = beatSpaceParamMap[idx][static_cast<size_t>(kMicrotonicPatchOscDcyIndex)];
+        hostedDirectParamRelease[idx] = beatSpaceParamMap[idx][static_cast<size_t>(kMicrotonicPatchNEnvDcyIndex)];
+        hostedDirectParamAttackAux[idx] = beatSpaceParamMap[idx][static_cast<size_t>(kMicrotonicPatchNEnvAtkIndex)];
+    }
+
+    auto* instance = hostRack.getInstance();
+    if (instance == nullptr)
+        return;
+
+    const auto& params = instance->getParameters();
+    const int totalParams = static_cast<int>(params.size());
+    if (totalParams <= 0)
+        return;
+
+    std::vector<juce::String> normalizedParamNames(static_cast<size_t>(totalParams));
+    for (int paramIndex = 0; paramIndex < totalParams; ++paramIndex)
+        normalizedParamNames[static_cast<size_t>(paramIndex)] =
+            normalizeParameterToken(params[paramIndex]->getName(128));
+
+    auto containsChannelNumber = [](const juce::String& text, int channelOneBased)
+    {
+        juce::String digits;
+        for (int i = 0; i < text.length(); ++i)
+        {
+            const auto c = text[i];
+            if (juce::CharacterFunctions::isDigit(c))
+            {
+                digits += juce::String::charToString(c);
+            }
+            else if (digits.isNotEmpty())
+            {
+                if (digits.getIntValue() == channelOneBased)
+                    return true;
+                digits.clear();
+            }
+        }
+        return digits.isNotEmpty() && digits.getIntValue() == channelOneBased;
+    };
+
+    auto channelMatches = [&containsChannelNumber](const juce::String& normalizedName, int channelOneBased)
+    {
+        const juce::String suffix = juce::String(channelOneBased);
+        if (normalizedName.endsWith(suffix))
+            return true;
+        if (normalizedName.contains("ch" + suffix)
+            || normalizedName.contains("channel" + suffix)
+            || normalizedName.contains("drum" + suffix)
+            || normalizedName.contains("voice" + suffix)
+            || normalizedName.contains("track" + suffix)
+            || normalizedName.contains("trk" + suffix)
+            || normalizedName.contains("v" + suffix))
+        {
+            return true;
+        }
+        return containsChannelNumber(normalizedName, channelOneBased);
+    };
+
+    auto findFallbackParam = [&](int channelOneBased,
+                                 std::initializer_list<const char*> strongNeedles,
+                                 std::initializer_list<const char*> weakNeedles)
+    {
+        int bestIndex = -1;
+        int bestScore = -1;
+        for (int paramIndex = 0; paramIndex < totalParams; ++paramIndex)
+        {
+            const auto& name = normalizedParamNames[static_cast<size_t>(paramIndex)];
+            if (name.isEmpty() || !channelMatches(name, channelOneBased))
+                continue;
+
+            int score = 0;
+            for (auto* needle : strongNeedles)
+            {
+                if (needle != nullptr && juce::String(needle).isNotEmpty() && name.contains(needle))
+                    score += 5;
+            }
+            for (auto* needle : weakNeedles)
+            {
+                if (needle != nullptr && juce::String(needle).isNotEmpty() && name.contains(needle))
+                    score += 2;
+            }
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestIndex = paramIndex;
+            }
+        }
+        return bestScore > 0 ? bestIndex : -1;
+    };
+
+    for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+    {
+        const auto idx = static_cast<size_t>(channel);
+        const int channelOneBased = channel + 1;
+
+        if (hostedDirectParamVolume[idx] < 0)
+            hostedDirectParamVolume[idx] = findFallbackParam(channelOneBased, { "level", "volume" }, { "vol", "amp", "gain" });
+
+        if (hostedDirectParamPan[idx] < 0)
+            hostedDirectParamPan[idx] = findFallbackParam(channelOneBased, { "pan" }, { "stereo", "balance" });
+
+        if (hostedDirectParamPitch[idx] < 0)
+            hostedDirectParamPitch[idx] = findFallbackParam(channelOneBased, { "oscfreq", "frequency" }, { "pitch", "tune", "freq" });
+
+        if (hostedDirectParamAttack[idx] < 0)
+            hostedDirectParamAttack[idx] = findFallbackParam(channelOneBased, { "oscatk", "oscattack" }, { "osc", "atk", "attack" });
+
+        if (hostedDirectParamDecay[idx] < 0)
+            hostedDirectParamDecay[idx] = findFallbackParam(channelOneBased, { "oscdcy", "oscdecay" }, { "osc", "dcy", "decay" });
+
+        if (hostedDirectParamRelease[idx] < 0)
+            hostedDirectParamRelease[idx] = findFallbackParam(channelOneBased, { "nenvdcy", "nenvdecay", "release" }, { "nenv", "dcy", "decay", "rel" });
+
+        if (hostedDirectParamAttackAux[idx] < 0)
+            hostedDirectParamAttackAux[idx] = findFallbackParam(channelOneBased, { "nenvatk", "nenvattack" }, { "nenv", "atk", "attack" });
+    }
+}
+
+bool StepVstHostAudioProcessor::refreshBeatSpaceParameterMap()
+{
+    auto* instance = hostRack.getInstance();
+    if (instance == nullptr)
+    {
+        clearHostedDirectParameterMap();
+        beatSpaceMappingReady = false;
+        beatSpaceMicrotonicExactMapping = false;
+        for (int i = 0; i < MaxStrips; ++i)
+        {
+            beatSpaceChannelMappingReady[static_cast<size_t>(i)] = false;
+            beatSpaceLastRecallMaxError[static_cast<size_t>(i)] = 0.0f;
+        }
+        return false;
+    }
+
+    const auto& params = instance->getParameters();
+    const int totalParams = static_cast<int>(params.size());
+    if (totalParams <= 0)
+    {
+        clearHostedDirectParameterMap();
+        beatSpaceMappingReady = false;
+        beatSpaceMicrotonicExactMapping = false;
+        for (int i = 0; i < MaxStrips; ++i)
+        {
+            beatSpaceChannelMappingReady[static_cast<size_t>(i)] = false;
+            beatSpaceLastRecallMaxError[static_cast<size_t>(i)] = 0.0f;
+        }
+        return false;
+    }
+
+    const bool likelyMicrotonic = isLikelyMicrotonicPlugin(instance->getName());
+
+    if (likelyMicrotonic)
+    {
+        beatSpaceMicrotonicExactMapping = false;
+        std::vector<juce::String> normalizedParamNames(static_cast<size_t>(totalParams));
+        for (int paramIndex = 0; paramIndex < totalParams; ++paramIndex)
+            normalizedParamNames[static_cast<size_t>(paramIndex)] =
+                normalizeParameterToken(params[paramIndex]->getName(128));
+
+        bool allReady = true;
+        bool anyReady = false;
+        int mappedCount = 0;
+
+        for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+        {
+            const auto chIdx = static_cast<size_t>(channel);
+            beatSpaceParamMap[chIdx].fill(-1);
+            beatSpaceLastRecallMaxError[chIdx] = 0.0f;
+
+            int mappedPatchParams = 0;
+            const juce::String suffix = juce::String(channel + 1);
+            for (int patch = 0; patch < BeatSpacePatchParamCount; ++patch)
+            {
+                const auto target = normalizeParameterToken(juce::String(kMicrotonicBeatSpacePatchParamOrder[static_cast<size_t>(patch)]) + suffix);
+                for (int paramIndex = 0; paramIndex < totalParams; ++paramIndex)
+                {
+                    if (normalizedParamNames[static_cast<size_t>(paramIndex)] == target)
+                    {
+                        beatSpaceParamMap[chIdx][static_cast<size_t>(patch)] = paramIndex;
+                        ++mappedPatchParams;
+                        break;
+                    }
+                }
+            }
+
+            const bool channelReady = (mappedPatchParams == BeatSpacePatchParamCount);
+            beatSpaceChannelMappingReady[chIdx] = channelReady;
+            if (channelReady)
+            {
+                anyReady = true;
+                ++mappedCount;
+            }
+            else
+            {
+                allReady = false;
+            }
+        }
+
+        for (int channel = BeatSpaceChannels; channel < MaxStrips; ++channel)
+        {
+            const auto chIdx = static_cast<size_t>(channel);
+            beatSpaceParamMap[chIdx].fill(-1);
+            beatSpaceChannelMappingReady[chIdx] = false;
+            beatSpaceLastRecallMaxError[chIdx] = 0.0f;
+        }
+
+        beatSpaceMappingReady = allReady;
+        beatSpaceMicrotonicExactMapping = anyReady;
+        if (mappedCount > 0 && !beatSpaceChannelMappingReady[static_cast<size_t>(beatSpaceSelectedChannel)])
+        {
+            for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+            {
+                if (beatSpaceChannelMappingReady[static_cast<size_t>(channel)])
+                {
+                    beatSpaceSelectedChannel = channel;
+                    break;
+                }
+            }
+        }
+
+        if (beatSpaceDecoderReady && beatSpaceMappingReady)
+            beatSpaceStatusMessage = "BeatSpace ready (Microtonic exact patch map 25/25)";
+        else if (beatSpaceDecoderReady && anyReady)
+            beatSpaceStatusMessage = "BeatSpace: Microtonic mapping partial (" + juce::String(mappedCount) + "/" + juce::String(BeatSpaceChannels) + ")";
+        else if (beatSpaceDecoderReady)
+            beatSpaceStatusMessage = "BeatSpace: Microtonic mapping unavailable";
+        refreshHostedDirectParameterMapFromBeatSpace(true);
+        return anyReady;
+    }
+
+    auto isChannelKeyword = [](const juce::String& token)
+    {
+        return token == "ch"
+            || token == "channel"
+            || token == "drum"
+            || token == "dr"
+            || token == "voice"
+            || token == "v"
+            || token == "track"
+            || token == "trk";
+    };
+
+    auto parseChannelDigits = [](const juce::String& digits)
+    {
+        if (digits.isEmpty())
+            return 0;
+        for (int i = 0; i < digits.length(); ++i)
+        {
+            if (!juce::CharacterFunctions::isDigit(digits[i]))
+                return 0;
+        }
+        const int value = digits.getIntValue();
+        return (value >= 1 && value <= BeatSpaceChannels) ? value : 0;
+    };
+
+    auto parseChannelFromToken = [&](const juce::String& token)
+    {
+        if (token.isEmpty())
+            return 0;
+
+        if (const int direct = parseChannelDigits(token); direct != 0)
+            return direct;
+
+        static constexpr std::array<const char*, 8> prefixes {{
+            "ch", "channel", "drum", "dr", "voice", "v", "track", "trk"
+        }};
+        for (const auto* prefix : prefixes)
+        {
+            const juce::String prefixText(prefix);
+            if (token.startsWith(prefixText) && token.length() > prefixText.length())
+            {
+                if (const int parsed = parseChannelDigits(token.substring(prefixText.length())); parsed != 0)
+                    return parsed;
+            }
+        }
+
+        if (token.length() == 2
+            && juce::CharacterFunctions::isLetter(token[0])
+            && juce::CharacterFunctions::isDigit(token[1]))
+        {
+            if (const int parsed = parseChannelDigits(token.substring(1)); parsed != 0)
+                return parsed;
+        }
+
+        return 0;
+    };
+
+    auto extractChannelFromName = [&](const juce::String& lowerName)
+    {
+        juce::String tokenized;
+        tokenized.preallocateBytes(lowerName.getNumBytesAsUTF8() + 1);
+        for (int i = 0; i < lowerName.length(); ++i)
+        {
+            const juce::juce_wchar c = lowerName[i];
+            if (juce::CharacterFunctions::isLetterOrDigit(c))
+                tokenized += juce::String::charToString(c);
+            else
+                tokenized += " ";
+        }
+
+        juce::StringArray tokens;
+        tokens.addTokens(tokenized, " ", "");
+        tokens.removeEmptyStrings();
+        if (tokens.isEmpty())
+            return 0;
+
+        int loneChannelToken = 0;
+        int loneChannelTokenCount = 0;
+        for (int i = 0; i < tokens.size(); ++i)
+        {
+            const auto token = tokens[i];
+
+            if (isChannelKeyword(token) && i + 1 < tokens.size())
+            {
+                if (const int parsed = parseChannelFromToken(tokens[i + 1]); parsed != 0)
+                    return parsed;
+            }
+
+            if (const int parsed = parseChannelFromToken(token); parsed != 0)
+            {
+                if (i == 0)
+                    return parsed;
+                if (i > 0 && isChannelKeyword(tokens[i - 1]))
+                    return parsed;
+                loneChannelToken = parsed;
+                ++loneChannelTokenCount;
+            }
+        }
+
+        if (loneChannelTokenCount == 1)
+            return loneChannelToken;
+        return 0;
+    };
+
+    auto matchAny = [](const juce::String& haystack, const std::array<juce::String, 8>& needles)
+    {
+        for (const auto& n : needles)
+        {
+            if (n.isNotEmpty() && haystack.contains(n))
+                return true;
+        }
+        return false;
+    };
+
+    std::array<juce::Array<int>, BeatSpaceChannels> parsedCandidates;
+    for (int paramIndex = 0; paramIndex < totalParams; ++paramIndex)
+    {
+        const auto name = params[paramIndex]->getName(128).toLowerCase();
+        if (const int parsedChannel = extractChannelFromName(name);
+            parsedChannel >= 1 && parsedChannel <= BeatSpaceChannels)
+        {
+            parsedCandidates[static_cast<size_t>(parsedChannel - 1)].addIfNotAlreadyThere(paramIndex);
+        }
+    }
+
+    bool allReady = true;
+    bool anyReady = false;
+    const int estimatedStride = juce::jmax(1, totalParams / BeatSpaceChannels);
+
+    for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+    {
+        const auto chIdx = static_cast<size_t>(channel);
+        beatSpaceParamMap[chIdx].fill(-1);
+        beatSpaceLastRecallMaxError[chIdx] = 0.0f;
+
+        int mappedParams = 0;
+        auto assignContiguous = [&](int start, int availableCount)
+        {
+            if (availableCount <= 0)
+                return;
+            const int safeStart = juce::jlimit(0, juce::jmax(0, totalParams - 1), start);
+            const int count = juce::jmax(0, juce::jmin(BeatSpaceVectorSize, juce::jmin(availableCount, totalParams - safeStart)));
+            for (int i = 0; i < count; ++i)
+                beatSpaceParamMap[chIdx][static_cast<size_t>(i)] = safeStart + i;
+            mappedParams = juce::jmax(mappedParams, count);
+        };
+
+        const juce::String ch = juce::String(channel + 1);
+        const std::array<juce::String, 8> channelNeedles {
+            "ch " + ch,
+            "ch" + ch,
+            "channel " + ch,
+            "channel" + ch,
+            "drum " + ch,
+            "voice " + ch,
+            "track " + ch,
+            "trk" + ch
+        };
+
+        juce::Array<int> candidates(parsedCandidates[static_cast<size_t>(channel)]);
+        for (int paramIndex = 0; paramIndex < totalParams; ++paramIndex)
+        {
+            const auto name = params[paramIndex]->getName(128).toLowerCase();
+            if (matchAny(name, channelNeedles))
+                candidates.addIfNotAlreadyThere(paramIndex);
+        }
+        candidates.sort();
+
+        if (candidates.size() >= BeatSpacePatchParamCount)
+        {
+            mappedParams = juce::jmin(BeatSpaceVectorSize, candidates.size());
+            for (int i = 0; i < mappedParams; ++i)
+                beatSpaceParamMap[chIdx][static_cast<size_t>(i)] = candidates[i];
+        }
+
+        // Fallback: split by per-channel parameter block for plugins that expose fewer than 73 params/channel.
+        if (mappedParams < BeatSpacePatchParamCount)
+        {
+            const int blockOffset = channel * estimatedStride;
+            const int blockAvailable = juce::jmax(0, juce::jmin(estimatedStride, totalParams - blockOffset));
+            if (blockAvailable >= BeatSpacePatchParamCount)
+                assignContiguous(blockOffset, blockAvailable);
+        }
+
+        // Legacy fallback: strict 73-sized contiguous blocks.
+        if (mappedParams < BeatSpacePatchParamCount)
+        {
+            const int blockOffset = channel * BeatSpaceVectorSize;
+            const int blockAvailable = juce::jmax(0, totalParams - blockOffset);
+            if (blockAvailable >= BeatSpacePatchParamCount)
+                assignContiguous(blockOffset, blockAvailable);
+        }
+
+        beatSpaceChannelMappingReady[chIdx] = (mappedParams >= BeatSpacePatchParamCount);
+        if (beatSpaceChannelMappingReady[chIdx])
+            anyReady = true;
+        else
+            allReady = false;
+    }
+
+    beatSpaceMicrotonicExactMapping = false;
+    int mappedCount = 0;
+    for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+    {
+        if (beatSpaceChannelMappingReady[static_cast<size_t>(channel)])
+            ++mappedCount;
+    }
+
+    for (int channel = BeatSpaceChannels; channel < MaxStrips; ++channel)
+    {
+        const auto chIdx = static_cast<size_t>(channel);
+        beatSpaceParamMap[chIdx].fill(-1);
+        beatSpaceChannelMappingReady[chIdx] = false;
+        beatSpaceLastRecallMaxError[chIdx] = 0.0f;
+    }
+
+    beatSpaceMappingReady = allReady;
+    if (mappedCount > 0 && !beatSpaceChannelMappingReady[static_cast<size_t>(beatSpaceSelectedChannel)])
+    {
+        for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+        {
+            if (beatSpaceChannelMappingReady[static_cast<size_t>(channel)])
+            {
+                beatSpaceSelectedChannel = channel;
+                break;
+            }
+        }
+    }
+
+    if (beatSpaceDecoderReady && beatSpaceMappingReady)
+        beatSpaceStatusMessage = "BeatSpace ready (host patch mapping)";
+    else if (beatSpaceDecoderReady && anyReady)
+        beatSpaceStatusMessage = "BeatSpace: hosted mapping partial (" + juce::String(mappedCount) + "/" + juce::String(BeatSpaceChannels) + ")";
+    else if (beatSpaceDecoderReady)
+        beatSpaceStatusMessage = "BeatSpace: hosted mapping unavailable";
+    refreshHostedDirectParameterMapFromBeatSpace(false);
+    return anyReady;
+}
+
+void StepVstHostAudioProcessor::clampBeatSpaceView()
+{
+    const int viewW = getBeatSpaceViewWidth();
+    const int viewH = getBeatSpaceViewHeight();
+    beatSpaceViewX = juce::jlimit(0, juce::jmax(0, BeatSpaceTableSize - viewW), beatSpaceViewX);
+    beatSpaceViewY = juce::jlimit(0, juce::jmax(0, BeatSpaceTableSize - viewH), beatSpaceViewY);
+}
+
+int StepVstHostAudioProcessor::getBeatSpaceViewWidth() const
+{
+    const int clampedZoom = juce::jlimit(0, BeatSpaceMaxZoom, beatSpaceZoomLevel);
+    const float zoomOctaves =
+        static_cast<float>(clampedZoom) / static_cast<float>(juce::jmax(1, BeatSpaceZoomStepsPerOctave));
+    const float zoomScale = std::pow(0.5f, zoomOctaves);
+    const int scaled = static_cast<int>(std::round(static_cast<float>(BeatSpaceTableSize) * zoomScale));
+    return juce::jlimit(BeatSpaceMinViewWidth, BeatSpaceTableSize, scaled);
+}
+
+int StepVstHostAudioProcessor::getBeatSpaceViewHeight() const
+{
+    const int clampedZoom = juce::jlimit(0, BeatSpaceMaxZoom, beatSpaceZoomLevel);
+    const float zoomOctaves =
+        static_cast<float>(clampedZoom) / static_cast<float>(juce::jmax(1, BeatSpaceZoomStepsPerOctave));
+    const float zoomScale = std::pow(0.5f, zoomOctaves);
+    const int scaled = static_cast<int>(std::round(static_cast<float>(BeatSpaceTableSize) * zoomScale));
+    return juce::jlimit(BeatSpaceMinViewHeight, BeatSpaceTableSize, scaled);
+}
+
+juce::Point<int> StepVstHostAudioProcessor::gridCellToBeatSpacePoint(
+    int gridX, int gridY, int gridWidth, int gridHeight) const
+{
+    const int w = juce::jmax(1, gridWidth);
+    const int h = juce::jmax(1, gridHeight);
+    const int viewW = getBeatSpaceViewWidth();
+    const int viewH = getBeatSpaceViewHeight();
+
+    const float tx = (w > 1)
+        ? static_cast<float>(juce::jlimit(0, w - 1, gridX)) / static_cast<float>(w - 1)
+        : 0.5f;
+    const float ty = (h > 1)
+        ? static_cast<float>(juce::jlimit(0, h - 1, gridY)) / static_cast<float>(h - 1)
+        : 0.5f;
+    const int x = beatSpaceViewX + juce::jlimit(
+        0,
+        viewW - 1,
+        static_cast<int>(std::round(tx * static_cast<float>(juce::jmax(0, viewW - 1)))));
+    const int y = beatSpaceViewY + juce::jlimit(
+        0,
+        viewH - 1,
+        static_cast<int>(std::round(ty * static_cast<float>(juce::jmax(0, viewH - 1)))));
+    return { x, y };
+}
+
+juce::Point<int> StepVstHostAudioProcessor::beatSpacePointToGridCell(
+    const juce::Point<int>& point, int gridWidth, int gridHeight) const
+{
+    const int w = juce::jmax(1, gridWidth);
+    const int h = juce::jmax(1, gridHeight);
+    const int viewW = getBeatSpaceViewWidth();
+    const int viewH = getBeatSpaceViewHeight();
+    const int px = juce::jlimit(0, BeatSpaceTableSize - 1, point.x);
+    const int py = juce::jlimit(0, BeatSpaceTableSize - 1, point.y);
+    const int relX = juce::jlimit(0, viewW - 1, px - beatSpaceViewX);
+    const int relY = juce::jlimit(0, viewH - 1, py - beatSpaceViewY);
+    const float tx = (viewW > 1)
+        ? static_cast<float>(relX) / static_cast<float>(viewW - 1)
+        : 0.0f;
+    const float ty = (viewH > 1)
+        ? static_cast<float>(relY) / static_cast<float>(viewH - 1)
+        : 0.0f;
+    const int gx = juce::jlimit(
+        0,
+        w - 1,
+        static_cast<int>(std::round(tx * static_cast<float>(juce::jmax(0, w - 1)))));
+    const int gy = juce::jlimit(
+        0,
+        h - 1,
+        static_cast<int>(std::round(ty * static_cast<float>(juce::jmax(0, h - 1)))));
+    return { gx, gy };
+}
+
+juce::Point<int> StepVstHostAudioProcessor::clampBeatSpacePointToTable(const juce::Point<int>& point) const
+{
+    return {
+        juce::jlimit(0, BeatSpaceTableSize - 1, point.x),
+        juce::jlimit(0, BeatSpaceTableSize - 1, point.y)
+    };
+}
+
+juce::Point<int> StepVstHostAudioProcessor::constrainBeatSpacePointForChannel(
+    int channel, const juce::Point<int>& point) const
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const int assignedSpace = juce::jlimit(
+        0,
+        BeatSpaceChannels - 1,
+        beatSpaceChannelCategoryAssignment[static_cast<size_t>(clampedChannel)]);
+    const auto freePoint = clampBeatSpacePointToTable(point);
+    juce::Point<int> constrained = freePoint;
+
+    if (!beatSpaceCategoryAnchorsReady)
+        return constrained;
+
+    const auto center = beatSpaceCategoryAnchors[static_cast<size_t>(assignedSpace)];
+    const int rx = juce::jmax(1, beatSpaceCategoryRegionRadiusX[static_cast<size_t>(assignedSpace)]);
+    const int ry = juce::jmax(1, beatSpaceCategoryRegionRadiusY[static_cast<size_t>(assignedSpace)]);
+
+    constrained.x = juce::jlimit(center.x - rx, center.x + rx, freePoint.x);
+    constrained.y = juce::jlimit(center.y - ry, center.y + ry, freePoint.y);
+    constrained = clampBeatSpacePointToTable(constrained);
+
+    const float lock = juce::jlimit(
+        0.0f,
+        1.0f,
+        beatSpaceZoneLockStrength[static_cast<size_t>(clampedChannel)]);
+    if (lock <= 0.0001f)
+        return freePoint;
+    if (lock >= 0.9999f)
+        return constrained;
+
+    const auto blend = [&](int a, int b)
+    {
+        return static_cast<int>(std::lround(
+            static_cast<double>(a) + (static_cast<double>(b - a) * static_cast<double>(lock))));
+    };
+    return clampBeatSpacePointToTable({ blend(freePoint.x, constrained.x), blend(freePoint.y, constrained.y) });
+}
+
+juce::Point<int> StepVstHostAudioProcessor::randomBeatSpacePointForChannel(
+    int channel, BeatSpaceRandomizeMode mode) const
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    auto randomFull = []()
+    {
+        return juce::Point<int> {
+            juce::Random::getSystemRandom().nextInt(BeatSpaceTableSize),
+            juce::Random::getSystemRandom().nextInt(BeatSpaceTableSize)
+        };
+    };
+
+    const auto currentPoint =
+        clampBeatSpacePointToTable(beatSpaceChannelPoints[static_cast<size_t>(clampedChannel)]);
+
+    auto randomNearPoint = [&](const juce::Point<int>& center, int radius)
+    {
+        const int safeRadius = juce::jmax(1, radius);
+        const int span = (safeRadius * 2) + 1;
+        const int dx = juce::Random::getSystemRandom().nextInt(span) - safeRadius;
+        const int dy = juce::Random::getSystemRandom().nextInt(span) - safeRadius;
+        return juce::Point<int> {
+            juce::jlimit(0, BeatSpaceTableSize - 1, center.x + dx),
+            juce::jlimit(0, BeatSpaceTableSize - 1, center.y + dy)
+        };
+    };
+
+    auto randomWithinAssignedZone = [&]() -> juce::Point<int>
+    {
+        if (!beatSpaceCategoryAnchorsReady)
+            return randomFull();
+        const int assignedSpace = juce::jlimit(
+            0,
+            BeatSpaceChannels - 1,
+            beatSpaceChannelCategoryAssignment[static_cast<size_t>(clampedChannel)]);
+        const auto center = beatSpaceCategoryAnchors[static_cast<size_t>(assignedSpace)];
+        const int rx = juce::jmax(1, beatSpaceCategoryRegionRadiusX[static_cast<size_t>(assignedSpace)]);
+        const int ry = juce::jmax(1, beatSpaceCategoryRegionRadiusY[static_cast<size_t>(assignedSpace)]);
+        const int x = juce::jlimit(
+            0, BeatSpaceTableSize - 1,
+            center.x + (juce::Random::getSystemRandom().nextInt((rx * 2) + 1) - rx));
+        const int y = juce::jlimit(
+            0, BeatSpaceTableSize - 1,
+            center.y + (juce::Random::getSystemRandom().nextInt((ry * 2) + 1) - ry));
+        return { x, y };
+    };
+
+    switch (mode)
+    {
+        case BeatSpaceRandomizeMode::FullWild:
+            return constrainBeatSpacePointForChannel(clampedChannel, randomFull());
+        case BeatSpaceRandomizeMode::WithinCategory:
+            return constrainBeatSpacePointForChannel(clampedChannel, randomWithinAssignedZone());
+        case BeatSpaceRandomizeMode::NearCurrent:
+        {
+            const int radius = juce::jmax(3, juce::jmin(14, getBeatSpaceViewWidth() / 5));
+            return constrainBeatSpacePointForChannel(clampedChannel, randomNearPoint(currentPoint, radius));
+        }
+        case BeatSpaceRandomizeMode::PreserveCharacter:
+        default:
+            break;
+    }
+
+    if (beatSpaceTable.empty())
+        return constrainBeatSpacePointForChannel(clampedChannel, randomWithinAssignedZone());
+
+    const int currentIndex = (currentPoint.y * BeatSpaceTableSize) + currentPoint.x;
+    const auto& currentVector = beatSpaceTable[static_cast<size_t>(
+        juce::jlimit(0, static_cast<int>(beatSpaceTable.size()) - 1, currentIndex))].values;
+
+    juce::Point<int> bestPoint = randomWithinAssignedZone();
+    float bestScore = std::numeric_limits<float>::max();
+    constexpr int kTries = 96;
+    for (int attempt = 0; attempt < kTries; ++attempt)
+    {
+        const auto candidate = randomWithinAssignedZone();
+        const int idx = (candidate.y * BeatSpaceTableSize) + candidate.x;
+        if (idx < 0 || idx >= static_cast<int>(beatSpaceTable.size()))
+            continue;
+        const auto& candVector = beatSpaceTable[static_cast<size_t>(idx)].values;
+        float patchDistance = 0.0f;
+        for (int i = 0; i < BeatSpacePatchParamCount; ++i)
+        {
+            const float d =
+                candVector[static_cast<size_t>(i)] - currentVector[static_cast<size_t>(i)];
+            patchDistance += d * d;
+        }
+        patchDistance = std::sqrt(patchDistance / static_cast<float>(BeatSpacePatchParamCount));
+        const float hotspot = (idx >= 0 && idx < static_cast<int>(beatSpaceHotspotWeights.size()))
+            ? juce::jlimit(0.0f, 1.0f, beatSpaceHotspotWeights[static_cast<size_t>(idx)])
+            : 0.45f;
+        const float score = patchDistance + ((1.0f - hotspot) * 0.16f)
+            + (juce::Random::getSystemRandom().nextFloat() * 0.015f);
+        if (score < bestScore)
+        {
+            bestScore = score;
+            bestPoint = candidate;
+        }
+    }
+    return constrainBeatSpacePointForChannel(clampedChannel, bestPoint);
+}
+
+float StepVstHostAudioProcessor::getBeatSpacePointConfidence(const juce::Point<int>& point) const
+{
+    if (beatSpaceTable.empty())
+        return 0.0f;
+
+    const auto clamped = clampBeatSpacePointToTable(point);
+    const int idx = (clamped.y * BeatSpaceTableSize) + clamped.x;
+    if (idx < 0 || idx >= static_cast<int>(beatSpaceTable.size()))
+        return 0.0f;
+
+    const float hotspot = (idx >= 0 && idx < static_cast<int>(beatSpaceHotspotWeights.size()))
+        ? juce::jlimit(0.0f, 1.0f, beatSpaceHotspotWeights[static_cast<size_t>(idx)])
+        : 0.45f;
+
+    float clusterAgreement = 0.5f;
+    if (beatSpaceColorClustersReady && idx < static_cast<int>(beatSpaceColorClusters.size()))
+    {
+        const int c = juce::jlimit(
+            0, BeatSpaceChannels - 1, beatSpaceColorClusters[static_cast<size_t>(idx)]);
+        int same = 0;
+        int total = 0;
+        const auto checkNeighbor = [&](int nx, int ny)
+        {
+            if (nx < 0 || ny < 0 || nx >= BeatSpaceTableSize || ny >= BeatSpaceTableSize)
+                return;
+            ++total;
+            const int nIdx = (ny * BeatSpaceTableSize) + nx;
+            if (nIdx >= 0 && nIdx < static_cast<int>(beatSpaceColorClusters.size()))
+            {
+                const int nc = juce::jlimit(
+                    0, BeatSpaceChannels - 1, beatSpaceColorClusters[static_cast<size_t>(nIdx)]);
+                if (nc == c)
+                    ++same;
+            }
+        };
+        checkNeighbor(clamped.x - 1, clamped.y);
+        checkNeighbor(clamped.x + 1, clamped.y);
+        checkNeighbor(clamped.x, clamped.y - 1);
+        checkNeighbor(clamped.x, clamped.y + 1);
+        if (total > 0)
+            clusterAgreement = static_cast<float>(same) / static_cast<float>(total);
+    }
+
+    float tagAffinity = 0.0f;
+    for (int category = 0; category < BeatSpaceChannels; ++category)
+    {
+        const auto catIdx = static_cast<size_t>(category);
+        const int tagCount = juce::jlimit(
+            0, BeatSpacePresetSlotsPerSpace, beatSpaceCategoryManualTagCounts[catIdx]);
+        for (int i = 0; i < tagCount; ++i)
+        {
+            const auto tagPoint = beatSpaceCategoryManualTagPoints[catIdx][static_cast<size_t>(i)];
+            const float dx = static_cast<float>(tagPoint.x - clamped.x);
+            const float dy = static_cast<float>(tagPoint.y - clamped.y);
+            const float dist = std::sqrt((dx * dx) + (dy * dy));
+            tagAffinity = juce::jmax(tagAffinity, juce::jlimit(0.0f, 1.0f, 1.0f - (dist / 14.0f)));
+        }
+    }
+
+    return juce::jlimit(
+        0.0f,
+        1.0f,
+        0.12f + (0.62f * hotspot) + (0.18f * clusterAgreement) + (0.18f * tagAffinity));
+}
+
+void StepVstHostAudioProcessor::updateBeatSpacePathMorph(const juce::AudioPlayHead::PositionInfo& posInfo)
+{
+    bool anyPathActive = false;
+    for (const auto& path : beatSpacePaths)
+    {
+        if (path.active && path.count > 1)
+        {
+            anyPathActive = true;
+            break;
+        }
+    }
+    if (!anyPathActive || !beatSpaceDecoderReady || beatSpaceTable.empty())
+        return;
+
+    const bool hostPlaying = posInfo.getIsPlaying();
+    const bool hasPpq = posInfo.getPpqPosition().hasValue();
+    const double hostPpq = hasPpq ? *posInfo.getPpqPosition() : 0.0;
+    const double hostBpm = (posInfo.getBpm().hasValue() && *posInfo.getBpm() > 0.0)
+        ? *posInfo.getBpm()
+        : 120.0;
+    const double nowMs = juce::Time::getMillisecondCounterHiRes();
+
+    for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+    {
+        auto& path = beatSpacePaths[static_cast<size_t>(channel)];
+        if (!path.active || path.count < 2 || path.recording)
+            continue;
+
+        const int segments = juce::jmax(1, path.count - 1);
+        const double cycleBeats = juce::jlimit(
+            0.03125,
+            128.0,
+            path.cycleBeats > 0.0
+                ? path.cycleBeats
+                : ((path.mode == BeatSpacePathMode::QuarterNote) ? 0.25 : 4.0));
+        const double cycleMs = juce::jmax(1.0, cycleBeats * (60000.0 / juce::jmax(1.0, hostBpm)));
+
+        double phase = 0.0;
+        if (hostPlaying && hasPpq)
+        {
+            if (path.pendingQuantizedStart)
+            {
+                if (!std::isfinite(path.startPpq) || path.startPpq < 0.0)
+                    path.startPpq = (std::floor(hostPpq / 4.0) + 1.0) * 4.0;
+                if (hostPpq + 1.0e-9 < path.startPpq)
+                {
+                    beatSpaceSetChannelPoint(channel, path.points[0], false, true);
+                    continue;
+                }
+                path.pendingQuantizedStart = false;
+            }
+
+            if (path.startPpq < 0.0)
+                path.startPpq = hostPpq;
+            const double elapsed = (hostPpq - path.startPpq) / juce::jmax(1.0e-6, cycleBeats);
+            phase = elapsed - std::floor(elapsed);
+            if (phase < 0.0)
+                phase += 1.0;
+        }
+        else
+        {
+            if (path.startMs <= 0.0)
+                path.startMs = nowMs;
+            const double elapsed = (nowMs - path.startMs) / juce::jmax(1.0, cycleMs);
+            phase = elapsed - std::floor(elapsed);
+            if (phase < 0.0)
+                phase += 1.0;
+        }
+
+        const double scaled = phase * static_cast<double>(segments);
+        int segIndex = static_cast<int>(std::floor(scaled));
+        float segT = static_cast<float>(scaled - std::floor(scaled));
+        segIndex = juce::jlimit(0, segments - 1, segIndex);
+        if (segIndex >= (segments - 1) && segT > 0.999f)
+            segT = 1.0f;
+
+        const auto from = path.points[static_cast<size_t>(segIndex)];
+        const auto to = path.points[static_cast<size_t>(segIndex + 1)];
+        const juce::Point<int> p {
+            static_cast<int>(std::lround(juce::jmap(segT, static_cast<float>(from.x), static_cast<float>(to.x)))),
+            static_cast<int>(std::lround(juce::jmap(segT, static_cast<float>(from.y), static_cast<float>(to.y))))
+        };
+        beatSpaceSetChannelPoint(channel, p, false, true);
+    }
+}
+
+void StepVstHostAudioProcessor::applyBeatSpaceLinkedChannelOffsets(
+    const juce::Point<int>& masterPoint, int masterChannel)
+{
+    const int anchorChannel = juce::jlimit(0, BeatSpaceChannels - 1, masterChannel);
+    if (!beatSpaceLinkedOffsetsReady)
+        rebuildBeatSpaceLinkedOffsetsFromCurrent(anchorChannel);
+
+    const auto constrainedMaster = clampBeatSpacePointToTable(masterPoint);
+    beatSpaceLinkedOffsets[static_cast<size_t>(anchorChannel)] = { 0.0f, 0.0f };
+
+    for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+    {
+        const auto offset = beatSpaceLinkedOffsets[static_cast<size_t>(channel)];
+        juce::Point<int> p {
+            static_cast<int>(std::lround(static_cast<float>(constrainedMaster.x) + offset.x)),
+            static_cast<int>(std::lround(static_cast<float>(constrainedMaster.y) + offset.y))
+        };
+        p = clampBeatSpacePointToTable(p);
+        beatSpaceChannelPoints[static_cast<size_t>(channel)] = p;
+    }
+
+    // Preserve the *actual* visible constellation (after border clamping)
+    // so subsequent master moves keep the same relative behavior.
+    for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+    {
+        const auto p = beatSpaceChannelPoints[static_cast<size_t>(channel)];
+        beatSpaceLinkedOffsets[static_cast<size_t>(channel)] = {
+            static_cast<float>(p.x - constrainedMaster.x),
+            static_cast<float>(p.y - constrainedMaster.y)
+        };
+    }
+}
+
+void StepVstHostAudioProcessor::rebuildBeatSpaceLinkedOffsetsFromCurrent(int masterChannel)
+{
+    const int anchorChannel = juce::jlimit(0, BeatSpaceChannels - 1, masterChannel);
+    const auto anchorPoint = clampBeatSpacePointToTable(beatSpaceChannelPoints[static_cast<size_t>(anchorChannel)]);
+
+    bool hasSpread = false;
+    for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+    {
+        const auto p = clampBeatSpacePointToTable(beatSpaceChannelPoints[static_cast<size_t>(channel)]);
+        beatSpaceLinkedOffsets[static_cast<size_t>(channel)] = {
+            static_cast<float>(p.x - anchorPoint.x),
+            static_cast<float>(p.y - anchorPoint.y)
+        };
+        if (channel != anchorChannel && (std::abs(p.x - anchorPoint.x) > 0 || std::abs(p.y - anchorPoint.y) > 0))
+            hasSpread = true;
+    }
+
+    if (!hasSpread && beatSpaceCategoryAnchorsReady)
+    {
+        const int anchorSpace = juce::jlimit(
+            0,
+            BeatSpaceChannels - 1,
+            beatSpaceChannelCategoryAssignment[static_cast<size_t>(anchorChannel)]);
+        const auto masterAnchor = beatSpaceCategoryAnchors[static_cast<size_t>(anchorSpace)];
+
+        for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+        {
+            const int channelSpace = juce::jlimit(
+                0,
+                BeatSpaceChannels - 1,
+                beatSpaceChannelCategoryAssignment[static_cast<size_t>(channel)]);
+            const auto channelAnchor = beatSpaceCategoryAnchors[static_cast<size_t>(channelSpace)];
+            const auto categoryOffset = channelAnchor - masterAnchor;
+            beatSpaceLinkedOffsets[static_cast<size_t>(channel)] = {
+                static_cast<float>(categoryOffset.x),
+                static_cast<float>(categoryOffset.y)
+            };
+        }
+    }
+
+    beatSpaceLinkedOffsets[static_cast<size_t>(anchorChannel)] = { 0.0f, 0.0f };
+    beatSpaceLinkedOffsetsReady = true;
+}
+
+void StepVstHostAudioProcessor::beginBeatSpaceMorphForChannel(
+    int channel,
+    const std::array<float, BeatSpaceVectorSize>& targetValues,
+    const juce::Point<int>& targetPoint)
+{
+    if (channel < 0 || channel >= BeatSpaceChannels)
+        return;
+    const auto idx = static_cast<size_t>(channel);
+    const auto clampedTargetPoint = clampBeatSpacePointToTable(targetPoint);
+    beatSpaceMorphStartVectors[idx] = beatSpaceCurrentVectors[idx];
+    beatSpaceMorphTargetVectors[idx] = targetValues;
+    beatSpaceMorphStartPoints[idx] = clampBeatSpacePointToTable(
+        beatSpaceMorphActive[idx]
+            ? beatSpaceMorphCurrentPoints[idx]
+            : beatSpaceMorphTargetPoints[idx]);
+    beatSpaceMorphTargetPoints[idx] = clampedTargetPoint;
+    beatSpaceMorphCurrentPoints[idx] = beatSpaceMorphStartPoints[idx];
+    beatSpaceMorphProgress[idx] = 0.0f;
+    beatSpaceMorphActive[idx] = true;
+    beatSpaceMorphStartTimeMs = juce::Time::getMillisecondCounterHiRes();
+}
+
+void StepVstHostAudioProcessor::applyBeatSpaceVectorToChannel(
+    int channel, const std::array<float, BeatSpaceVectorSize>& values)
+{
+    if (channel < 0 || channel >= BeatSpaceChannels)
+        return;
+    if (!beatSpaceDecoderReady)
+        return;
+
+    auto* instance = hostRack.getInstance();
+    if (instance == nullptr)
+        return;
+
+    const auto& params = instance->getParameters();
+    const auto idx = static_cast<size_t>(channel);
+    if (!beatSpaceChannelMappingReady[idx])
+        return;
+
+    std::array<float, BeatSpaceVectorSize> appliedValues = values;
+    float maxError = 0.0f;
+    for (int i = 0; i < BeatSpaceVectorSize; ++i)
+    {
+        const int paramIndex = beatSpaceParamMap[idx][static_cast<size_t>(i)];
+        if (paramIndex < 0 || paramIndex >= static_cast<int>(params.size()))
+            continue;
+
+        float normalized = juce::jlimit(0.0f, 1.0f, values[static_cast<size_t>(i)]);
+        const int steps = params[paramIndex]->getNumSteps();
+        if (steps > 1 && steps <= 4096)
+        {
+            const float denom = static_cast<float>(steps - 1);
+            if (denom > 0.0f)
+                normalized = std::round(normalized * denom) / denom;
+        }
+
+        params[paramIndex]->setValueNotifyingHost(normalized);
+        const float readBack = params[paramIndex]->getValue();
+        maxError = juce::jmax(maxError, std::abs(readBack - normalized));
+        appliedValues[static_cast<size_t>(i)] = normalized;
+    }
+
+    beatSpaceLastRecallMaxError[idx] = maxError;
+    beatSpaceCurrentVectors[idx] = appliedValues;
+}
+
+void StepVstHostAudioProcessor::applyBeatSpacePointToChannels(bool applyAllChannels, bool morph)
+{
+    if (!beatSpaceDecoderReady || beatSpaceTable.empty())
+        return;
+    if (!beatSpaceMappingReady)
+    {
+        if (!refreshBeatSpaceParameterMap())
+            return;
+    }
+    if (morph)
+        updateBeatSpaceMorph();
+
+    auto applyOne = [this, morph](int channel)
+    {
+        const auto idx = static_cast<size_t>(channel);
+        const auto targetPoint = clampBeatSpacePointToTable(beatSpaceChannelPoints[idx]);
+        const int px = targetPoint.x;
+        const int py = targetPoint.y;
+        const int tableIndex = (py * BeatSpaceTableSize) + px;
+        if (tableIndex < 0 || tableIndex >= static_cast<int>(beatSpaceTable.size()))
+            return;
+        beatSpaceLastAppliedTableIndex[idx] = tableIndex;
+        const auto& values = beatSpaceTable[static_cast<size_t>(tableIndex)].values;
+        if (morph)
+        {
+            beginBeatSpaceMorphForChannel(channel, values, targetPoint);
+        }
+        else
+        {
+            applyBeatSpaceVectorToChannel(channel, values);
+            beatSpaceMorphStartPoints[idx] = targetPoint;
+            beatSpaceMorphTargetPoints[idx] = targetPoint;
+            beatSpaceMorphCurrentPoints[idx] = targetPoint;
+            beatSpaceMorphProgress[idx] = 1.0f;
+            beatSpaceMorphActive[idx] = false;
+        }
+    };
+
+    if (applyAllChannels)
+    {
+        for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+            applyOne(channel);
+    }
+    else
+    {
+        applyOne(beatSpaceSelectedChannel);
+    }
+}
+
+void StepVstHostAudioProcessor::updateBeatSpaceMorph()
+{
+    if (!beatSpaceDecoderReady)
+        return;
+    if (!beatSpaceMappingReady)
+    {
+        if (!refreshBeatSpaceParameterMap())
+            return;
+    }
+
+    bool anyActive = false;
+    for (const auto active : beatSpaceMorphActive)
+    {
+        if (active)
+        {
+            anyActive = true;
+            break;
+        }
+    }
+    if (!anyActive)
+        return;
+
+    const double nowMs = juce::Time::getMillisecondCounterHiRes();
+    const double durationMs = juce::jmax(1.0, beatSpaceMorphDurationMs);
+    const float t = juce::jlimit(0.0f, 1.0f, static_cast<float>((nowMs - beatSpaceMorphStartTimeMs) / durationMs));
+    const float shaped = t * t * (3.0f - (2.0f * t));
+
+    for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+    {
+        const auto idx = static_cast<size_t>(channel);
+        if (!beatSpaceMorphActive[idx])
+            continue;
+
+        std::array<float, BeatSpaceVectorSize> blended{};
+        for (int i = 0; i < BeatSpaceVectorSize; ++i)
+        {
+            blended[static_cast<size_t>(i)] = juce::jmap(
+                shaped,
+                beatSpaceMorphStartVectors[idx][static_cast<size_t>(i)],
+                beatSpaceMorphTargetVectors[idx][static_cast<size_t>(i)]);
+        }
+        applyBeatSpaceVectorToChannel(channel, blended);
+        beatSpaceMorphProgress[idx] = shaped;
+        const auto from = beatSpaceMorphStartPoints[idx];
+        const auto to = beatSpaceMorphTargetPoints[idx];
+        beatSpaceMorphCurrentPoints[idx] = clampBeatSpacePointToTable({
+            static_cast<int>(std::lround(juce::jmap(shaped, static_cast<float>(from.x), static_cast<float>(to.x)))),
+            static_cast<int>(std::lround(juce::jmap(shaped, static_cast<float>(from.y), static_cast<float>(to.y))))
+        });
+        if (t >= 0.9999f)
+        {
+            beatSpaceMorphProgress[idx] = 1.0f;
+            beatSpaceMorphCurrentPoints[idx] = beatSpaceMorphTargetPoints[idx];
+            beatSpaceMorphActive[idx] = false;
+        }
+    }
+}
+
+StepVstHostAudioProcessor::BeatSpaceVisualState StepVstHostAudioProcessor::getBeatSpaceVisualState() const
+{
+    BeatSpaceVisualState state;
+    state.decoderReady = beatSpaceDecoderReady;
+    state.mappingReady = beatSpaceMappingReady;
+    state.microtonicExactMapping = beatSpaceMicrotonicExactMapping;
+    state.colorClustersReady = beatSpaceColorClustersReady;
+    state.linkAllChannels = beatSpaceLinkAllChannels;
+    state.confidenceOverlayEnabled = beatSpaceConfidenceOverlayEnabled;
+    state.pathOverlayEnabled = beatSpacePathOverlayEnabled;
+    state.pathRecordArmedChannel = beatSpacePathRecordArmedChannel;
+    state.selectedChannel = beatSpaceSelectedChannel;
+    state.tableSize = BeatSpaceTableSize;
+    state.zoomLevel = beatSpaceZoomLevel;
+    state.viewX = beatSpaceViewX;
+    state.viewY = beatSpaceViewY;
+    state.viewWidth = getBeatSpaceViewWidth();
+    state.viewHeight = getBeatSpaceViewHeight();
+    state.morphDurationMs = beatSpaceMorphDurationMs;
+    state.statusMessage = beatSpaceStatusMessage;
+    state.selectedChannel = juce::jlimit(0, BeatSpaceChannels - 1, state.selectedChannel);
+    state.channelMapped = beatSpaceChannelMappingReady;
+    for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+    {
+        const auto idx = static_cast<size_t>(channel);
+        if (state.channelMapped[static_cast<size_t>(channel)])
+            ++state.mappedChannels;
+        state.maxRecallError = juce::jmax(state.maxRecallError, beatSpaceLastRecallMaxError[idx]);
+        state.channelMorphActive[idx] = beatSpaceMorphActive[idx];
+        state.channelMorphProgress[idx] = juce::jlimit(0.0f, 1.0f, beatSpaceMorphProgress[idx]);
+        state.channelMorphFrom[idx] = beatSpaceMorphStartPoints[idx];
+        state.channelMorphTo[idx] = beatSpaceMorphTargetPoints[idx];
+        state.channelMorphCurrent[idx] = beatSpaceMorphCurrentPoints[idx];
+        if (beatSpaceMorphActive[idx])
+            state.anyMorphActive = true;
+    }
+    state.channelPoints = beatSpaceChannelPoints;
+    state.categoryAnchors = beatSpaceCategoryAnchors;
+    state.categoryRadiusX = beatSpaceCategoryRegionRadiusX;
+    state.categoryRadiusY = beatSpaceCategoryRegionRadiusY;
+    state.categoryManual = beatSpaceCategoryAnchorManual;
+    state.channelCategoryAssignment = beatSpaceChannelCategoryAssignment;
+    state.zoneLockStrength = beatSpaceZoneLockStrength;
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+    {
+        int usedCount = 0;
+        for (const auto& bookmark : beatSpaceBookmarks[static_cast<size_t>(i)])
+        {
+            if (bookmark.used)
+                ++usedCount;
+        }
+        state.bookmarkCounts[static_cast<size_t>(i)] = usedCount;
+
+        const auto& path = beatSpacePaths[static_cast<size_t>(i)];
+        state.pathPointCounts[static_cast<size_t>(i)] = path.count;
+        state.pathLoopBars[static_cast<size_t>(i)] = path.loopBars;
+        state.pathActive[static_cast<size_t>(i)] = path.active;
+        state.pathPoints[static_cast<size_t>(i)] = path.points;
+    }
+    const auto selectedIdx = static_cast<size_t>(state.selectedChannel);
+    const auto selectedPointForConfidence = beatSpaceMorphActive[selectedIdx]
+        ? beatSpaceMorphCurrentPoints[selectedIdx]
+        : beatSpaceChannelPoints[selectedIdx];
+    state.selectedConfidence = getBeatSpacePointConfidence(selectedPointForConfidence);
+    return state;
+}
+
+juce::Image StepVstHostAudioProcessor::getBeatSpaceTablePreviewImage() const
+{
+    return beatSpaceTablePreviewImage;
+}
+
+juce::Image StepVstHostAudioProcessor::getBeatSpaceConfidencePreviewImage() const
+{
+    return beatSpaceConfidencePreviewImage;
+}
+
+bool StepVstHostAudioProcessor::isBeatSpaceReady() const
+{
+    return beatSpaceDecoderReady && beatSpaceMappingReady;
+}
+
+void StepVstHostAudioProcessor::normalizeBeatSpacePresetLayoutForSpace(int space)
+{
+    const int clampedSpace = juce::jlimit(0, BeatSpaceChannels - 1, space);
+    const auto idx = static_cast<size_t>(clampedSpace);
+    auto& order = beatSpaceCategoryPresetOrder[idx];
+    auto& hidden = beatSpaceCategoryPresetHidden[idx];
+
+    std::array<int, BeatSpacePresetSlotsPerSpace> normalized{};
+    std::array<bool, BeatSpacePresetSlotsPerSpace> used{};
+    used.fill(false);
+
+    int write = 0;
+    for (int pos = 0; pos < BeatSpacePresetSlotsPerSpace; ++pos)
+    {
+        const int slot = order[static_cast<size_t>(pos)];
+        if (slot < 0 || slot >= BeatSpacePresetSlotsPerSpace)
+            continue;
+        if (used[static_cast<size_t>(slot)])
+            continue;
+        normalized[static_cast<size_t>(write++)] = slot;
+        used[static_cast<size_t>(slot)] = true;
+    }
+
+    for (int slot = 0; slot < BeatSpacePresetSlotsPerSpace; ++slot)
+    {
+        if (used[static_cast<size_t>(slot)])
+            continue;
+        normalized[static_cast<size_t>(write++)] = slot;
+    }
+
+    for (int i = 0; i < BeatSpacePresetSlotsPerSpace; ++i)
+        order[static_cast<size_t>(i)] = normalized[static_cast<size_t>(i)];
+
+    int visibleCount = 0;
+    for (int slot = 0; slot < BeatSpacePresetSlotsPerSpace; ++slot)
+    {
+        const bool isHidden = hidden[static_cast<size_t>(slot)];
+        if (!isHidden)
+            ++visibleCount;
+    }
+
+    if (visibleCount <= 0)
+        hidden[static_cast<size_t>(order.front())] = false;
+}
+
+std::vector<int> StepVstHostAudioProcessor::getBeatSpaceVisiblePresetSlotsForSpace(int space) const
+{
+    const int clampedSpace = juce::jlimit(0, BeatSpaceChannels - 1, space);
+    const auto idx = static_cast<size_t>(clampedSpace);
+    const auto& order = beatSpaceCategoryPresetOrder[idx];
+    const auto& hidden = beatSpaceCategoryPresetHidden[idx];
+
+    std::vector<int> visible;
+    visible.reserve(BeatSpacePresetSlotsPerSpace);
+    std::array<bool, BeatSpacePresetSlotsPerSpace> seen{};
+    seen.fill(false);
+
+    for (int pos = 0; pos < BeatSpacePresetSlotsPerSpace; ++pos)
+    {
+        const int slot = order[static_cast<size_t>(pos)];
+        if (slot < 0 || slot >= BeatSpacePresetSlotsPerSpace)
+            continue;
+        if (seen[static_cast<size_t>(slot)])
+            continue;
+        seen[static_cast<size_t>(slot)] = true;
+        if (!hidden[static_cast<size_t>(slot)])
+            visible.push_back(slot);
+    }
+
+    for (int slot = 0; slot < BeatSpacePresetSlotsPerSpace; ++slot)
+    {
+        if (seen[static_cast<size_t>(slot)])
+            continue;
+        if (!hidden[static_cast<size_t>(slot)])
+            visible.push_back(slot);
+    }
+
+    return visible;
+}
+
+bool StepVstHostAudioProcessor::loadBeatSpacePresetFromAssignedSpace(int channel, int presetSlot)
+{
+    if (!beatSpaceDecoderReady || beatSpaceTable.empty())
+        return false;
+
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const int clampedSlot = juce::jlimit(0, BeatSpacePresetSlotsPerSpace - 1, presetSlot);
+
+    if (!beatSpaceCategoryAnchorsReady)
+        rebuildBeatSpaceCategoryAnchors();
+
+    const int assignedSpace = getBeatSpaceChannelSpaceAssignment(clampedChannel);
+    if (!beatSpaceCategoryPresetPointsReady[static_cast<size_t>(assignedSpace)])
+        rebuildBeatSpaceCategoryPresetPoints();
+
+    auto targetPoint = beatSpaceCategoryPresetPoints[static_cast<size_t>(assignedSpace)]
+        [static_cast<size_t>(clampedSlot)];
+    if (!beatSpaceCategoryPresetPointsReady[static_cast<size_t>(assignedSpace)])
+    {
+        // Fallback to anchor if analysis table was not available for this category.
+        targetPoint = beatSpaceCategoryAnchorsReady
+            ? beatSpaceCategoryAnchors[static_cast<size_t>(assignedSpace)]
+            : juce::Point<int> { BeatSpaceTableSize / 2, BeatSpaceTableSize / 2 };
+    }
+    targetPoint = constrainBeatSpacePointForChannel(clampedChannel, targetPoint);
+
+    // Strip preset picker always targets only the selected channel, even when Link-All is enabled.
+    beatSpaceChannelPoints[static_cast<size_t>(clampedChannel)] = targetPoint;
+    const int previousSelected = beatSpaceSelectedChannel;
+    beatSpaceSelectedChannel = clampedChannel;
+    applyBeatSpacePointToChannels(false, true);
+    beatSpaceSelectedChannel = previousSelected;
+
+    return true;
+}
+
+bool StepVstHostAudioProcessor::loadBeatSpacePresetFromAssignedSpaceDisplayIndex(int channel, int displayIndex)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const int assignedSpace = getBeatSpaceChannelSpaceAssignment(clampedChannel);
+    const auto visible = getBeatSpaceVisiblePresetSlotsForSpace(assignedSpace);
+    if (visible.empty())
+        return false;
+
+    const int clampedDisplay = juce::jlimit(0, static_cast<int>(visible.size()) - 1, displayIndex);
+    return loadBeatSpacePresetFromAssignedSpace(clampedChannel, visible[static_cast<size_t>(clampedDisplay)]);
+}
+
+juce::String StepVstHostAudioProcessor::getBeatSpaceSpaceName(int space)
+{
+    const int clampedSpace = juce::jlimit(0, BeatSpaceChannels - 1, space);
+    return kBeatSpaceSpaceNames[static_cast<size_t>(clampedSpace)];
+}
+
+int StepVstHostAudioProcessor::getBeatSpaceChannelSpaceAssignment(int channel) const
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    return juce::jlimit(
+        0,
+        BeatSpaceChannels - 1,
+        beatSpaceChannelCategoryAssignment[static_cast<size_t>(clampedChannel)]);
+}
+
+void StepVstHostAudioProcessor::setBeatSpaceChannelSpaceAssignment(int channel, int space)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const int clampedSpace = juce::jlimit(0, BeatSpaceChannels - 1, space);
+    auto& assignment = beatSpaceChannelCategoryAssignment[static_cast<size_t>(clampedChannel)];
+    if (assignment == clampedSpace)
+        return;
+
+    assignment = clampedSpace;
+
+    if (beatSpaceLinkAllChannels)
+    {
+        const int selectedChannel = juce::jlimit(0, BeatSpaceChannels - 1, beatSpaceSelectedChannel);
+        if (!beatSpaceLinkedOffsetsReady)
+            rebuildBeatSpaceLinkedOffsetsFromCurrent(selectedChannel);
+
+        if (beatSpaceCategoryAnchorsReady)
+        {
+            const int masterSpace = juce::jlimit(
+                0,
+                BeatSpaceChannels - 1,
+                beatSpaceChannelCategoryAssignment[static_cast<size_t>(selectedChannel)]);
+            const auto masterAnchor = beatSpaceCategoryAnchors[static_cast<size_t>(masterSpace)];
+            const auto channelAnchor = beatSpaceCategoryAnchors[static_cast<size_t>(clampedSpace)];
+            beatSpaceLinkedOffsets[static_cast<size_t>(clampedChannel)] = {
+                static_cast<float>(channelAnchor.x - masterAnchor.x),
+                static_cast<float>(channelAnchor.y - masterAnchor.y)
+            };
+            if (clampedChannel == selectedChannel)
+                beatSpaceLinkedOffsets[static_cast<size_t>(selectedChannel)] = { 0.0f, 0.0f };
+        }
+
+        applyBeatSpaceLinkedChannelOffsets(
+            beatSpaceChannelPoints[static_cast<size_t>(selectedChannel)],
+            selectedChannel);
+        applyBeatSpacePointToChannels(true, false);
+    }
+    else
+    {
+        beatSpaceChannelPoints[static_cast<size_t>(clampedChannel)] =
+            clampBeatSpacePointToTable(beatSpaceChannelPoints[static_cast<size_t>(clampedChannel)]);
+        applyBeatSpacePointToChannels(true, false);
+    }
+
+    savePersistentControlPages();
+}
+
+std::vector<int> StepVstHostAudioProcessor::getBeatSpacePresetDisplaySlotsForAssignedSpace(int channel) const
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const int assignedSpace = getBeatSpaceChannelSpaceAssignment(clampedChannel);
+    return getBeatSpaceVisiblePresetSlotsForSpace(assignedSpace);
+}
+
+juce::String StepVstHostAudioProcessor::getBeatSpacePresetLabelForSpaceSlot(int space, int slot) const
+{
+    const int clampedSpace = juce::jlimit(0, BeatSpaceChannels - 1, space);
+    const int clampedSlot = juce::jlimit(0, BeatSpacePresetSlotsPerSpace - 1, slot);
+    const auto idx = static_cast<size_t>(clampedSpace);
+    const auto slotIdx = static_cast<size_t>(clampedSlot);
+    const auto custom = beatSpaceCategoryPresetLabels[idx][slotIdx].trim();
+    if (custom.isNotEmpty())
+        return custom;
+
+    return getBeatSpaceSpaceName(clampedSpace) + " "
+        + juce::String(clampedSlot + 1).paddedLeft('0', 2);
+}
+
+bool StepVstHostAudioProcessor::moveBeatSpacePresetForAssignedSpace(int channel, int fromDisplayIndex, int toDisplayIndex)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const int assignedSpace = getBeatSpaceChannelSpaceAssignment(clampedChannel);
+    const auto idx = static_cast<size_t>(assignedSpace);
+    normalizeBeatSpacePresetLayoutForSpace(assignedSpace);
+
+    auto visible = getBeatSpaceVisiblePresetSlotsForSpace(assignedSpace);
+    if (visible.size() < 2)
+        return false;
+
+    const int from = juce::jlimit(0, static_cast<int>(visible.size()) - 1, fromDisplayIndex);
+    const int to = juce::jlimit(0, static_cast<int>(visible.size()) - 1, toDisplayIndex);
+    if (from == to)
+        return true;
+
+    const int movingSlot = visible[static_cast<size_t>(from)];
+    visible.erase(visible.begin() + from);
+    visible.insert(visible.begin() + to, movingSlot);
+
+    std::array<int, BeatSpacePresetSlotsPerSpace> newOrder{};
+    std::array<bool, BeatSpacePresetSlotsPerSpace> used{};
+    used.fill(false);
+    int write = 0;
+
+    for (const int slot : visible)
+    {
+        if (slot < 0 || slot >= BeatSpacePresetSlotsPerSpace)
+            continue;
+        if (used[static_cast<size_t>(slot)])
+            continue;
+        newOrder[static_cast<size_t>(write++)] = slot;
+        used[static_cast<size_t>(slot)] = true;
+    }
+
+    const auto oldOrder = beatSpaceCategoryPresetOrder[idx];
+    for (int pos = 0; pos < BeatSpacePresetSlotsPerSpace; ++pos)
+    {
+        const int slot = oldOrder[static_cast<size_t>(pos)];
+        if (slot < 0 || slot >= BeatSpacePresetSlotsPerSpace)
+            continue;
+        if (used[static_cast<size_t>(slot)])
+            continue;
+        newOrder[static_cast<size_t>(write++)] = slot;
+        used[static_cast<size_t>(slot)] = true;
+    }
+
+    for (int slot = 0; slot < BeatSpacePresetSlotsPerSpace; ++slot)
+    {
+        if (used[static_cast<size_t>(slot)])
+            continue;
+        newOrder[static_cast<size_t>(write++)] = slot;
+    }
+
+    beatSpaceCategoryPresetOrder[idx] = newOrder;
+    normalizeBeatSpacePresetLayoutForSpace(assignedSpace);
+    savePersistentControlPages();
+    return true;
+}
+
+bool StepVstHostAudioProcessor::renameBeatSpacePresetForAssignedSpace(int channel, int displayIndex, const juce::String& label)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const int assignedSpace = getBeatSpaceChannelSpaceAssignment(clampedChannel);
+    const auto idx = static_cast<size_t>(assignedSpace);
+
+    const auto visible = getBeatSpaceVisiblePresetSlotsForSpace(assignedSpace);
+    if (visible.empty())
+        return false;
+
+    const int clampedDisplay = juce::jlimit(0, static_cast<int>(visible.size()) - 1, displayIndex);
+    const int slot = visible[static_cast<size_t>(clampedDisplay)];
+    beatSpaceCategoryPresetLabels[idx][static_cast<size_t>(slot)] = label.trim();
+    savePersistentControlPages();
+    return true;
+}
+
+bool StepVstHostAudioProcessor::deleteBeatSpacePresetForAssignedSpace(int channel, int displayIndex)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const int assignedSpace = getBeatSpaceChannelSpaceAssignment(clampedChannel);
+    const auto idx = static_cast<size_t>(assignedSpace);
+
+    auto visible = getBeatSpaceVisiblePresetSlotsForSpace(assignedSpace);
+    if (visible.size() <= 1)
+        return false;
+
+    const int clampedDisplay = juce::jlimit(0, static_cast<int>(visible.size()) - 1, displayIndex);
+    const int slot = visible[static_cast<size_t>(clampedDisplay)];
+    beatSpaceCategoryPresetHidden[idx][static_cast<size_t>(slot)] = true;
+    normalizeBeatSpacePresetLayoutForSpace(assignedSpace);
+    savePersistentControlPages();
+    return true;
+}
+
+void StepVstHostAudioProcessor::resetBeatSpacePresetLayoutForAssignedSpace(int channel)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const int assignedSpace = getBeatSpaceChannelSpaceAssignment(clampedChannel);
+    const auto idx = static_cast<size_t>(assignedSpace);
+
+    for (int slot = 0; slot < BeatSpacePresetSlotsPerSpace; ++slot)
+    {
+        beatSpaceCategoryPresetOrder[idx][static_cast<size_t>(slot)] = slot;
+        beatSpaceCategoryPresetHidden[idx][static_cast<size_t>(slot)] = false;
+        beatSpaceCategoryPresetLabels[idx][static_cast<size_t>(slot)] = {};
+    }
+    normalizeBeatSpacePresetLayoutForSpace(assignedSpace);
+    savePersistentControlPages();
+}
+
+void StepVstHostAudioProcessor::beatSpaceSelectChannel(int channel)
+{
+    const int requested = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    if (beatSpaceChannelMappingReady[static_cast<size_t>(requested)])
+    {
+        beatSpaceSelectedChannel = requested;
+        return;
+    }
+
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+    {
+        if (beatSpaceChannelMappingReady[static_cast<size_t>(i)])
+        {
+            beatSpaceSelectedChannel = i;
+            return;
+        }
+    }
+
+    beatSpaceSelectedChannel = requested;
+}
+
+void StepVstHostAudioProcessor::beatSpaceSetLinkAllChannels(bool shouldLink)
+{
+    const bool nextLinkState = shouldLink;
+    if (beatSpaceLinkAllChannels == nextLinkState)
+        return;
+
+    beatSpaceLinkAllChannels = nextLinkState;
+
+    if (!beatSpaceLinkAllChannels)
+    {
+        beatSpaceLinkedOffsetsReady = false;
+        return;
+    }
+
+    if (!beatSpaceCategoryAnchorsReady)
+        rebuildBeatSpaceCategoryAnchors();
+
+    rebuildBeatSpaceLinkedOffsetsFromCurrent(beatSpaceSelectedChannel);
+    // Link-all keeps channels distributed with category-specific offsets.
+    // 1=Kick, 2=Snare, 3=Closed Hat, 4=Open Hat, 5=Perc, 6=Misc.
+    const auto anchor = beatSpaceChannelPoints[static_cast<size_t>(beatSpaceSelectedChannel)];
+    applyBeatSpaceLinkedChannelOffsets(anchor, beatSpaceSelectedChannel);
+    applyBeatSpacePointToChannels(true, false);
+}
+
+void StepVstHostAudioProcessor::beatSpaceRandomizeSelection()
+{
+    if (!beatSpaceDecoderReady || beatSpaceTable.empty())
+        return;
+
+    if (beatSpaceLinkAllChannels)
+    {
+        const juce::Point<int> randomMaster =
+            randomBeatSpacePointForChannel(beatSpaceSelectedChannel, beatSpaceRandomizeMode);
+        applyBeatSpaceLinkedChannelOffsets(randomMaster, beatSpaceSelectedChannel);
+    }
+    else
+    {
+        // Match BeatSpace script behavior: randomize every channel, not only the selected one.
+        for (int i = 0; i < BeatSpaceChannels; ++i)
+            beatSpaceChannelPoints[static_cast<size_t>(i)] =
+                randomBeatSpacePointForChannel(i, beatSpaceRandomizeMode);
+    }
+    applyBeatSpacePointToChannels(true, false);
+}
+
+bool StepVstHostAudioProcessor::beatSpaceRandomizeChannel(
+    int channel, BeatSpaceRandomizeMode mode, bool applyLinkedIfSelected)
+{
+    if (!beatSpaceDecoderReady || beatSpaceTable.empty())
+        return false;
+
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const auto p = randomBeatSpacePointForChannel(clampedChannel, mode);
+    const bool moveLinked = applyLinkedIfSelected
+        && beatSpaceLinkAllChannels
+        && clampedChannel == beatSpaceSelectedChannel;
+    beatSpaceSetChannelPoint(clampedChannel, p, moveLinked, true);
+    return true;
+}
+
+void StepVstHostAudioProcessor::setBeatSpaceRandomizeMode(BeatSpaceRandomizeMode mode)
+{
+    if (beatSpaceRandomizeMode == mode)
+        return;
+    beatSpaceRandomizeMode = mode;
+    savePersistentControlPages();
+}
+
+StepVstHostAudioProcessor::BeatSpaceRandomizeMode StepVstHostAudioProcessor::getBeatSpaceRandomizeMode() const
+{
+    return beatSpaceRandomizeMode;
+}
+
+void StepVstHostAudioProcessor::beatSpaceAdjustZoom(int delta)
+{
+    const int oldViewW = getBeatSpaceViewWidth();
+    const int oldViewH = getBeatSpaceViewHeight();
+    const auto center = beatSpaceChannelPoints[static_cast<size_t>(beatSpaceSelectedChannel)];
+    beatSpaceZoomLevel = juce::jlimit(0, BeatSpaceMaxZoom, beatSpaceZoomLevel + delta);
+    const int newViewW = getBeatSpaceViewWidth();
+    const int newViewH = getBeatSpaceViewHeight();
+    beatSpaceViewX += (oldViewW - newViewW) / 2;
+    beatSpaceViewY += (oldViewH - newViewH) / 2;
+    beatSpaceViewX = center.x - (newViewW / 2);
+    beatSpaceViewY = center.y - (newViewH / 2);
+    clampBeatSpaceView();
+
+    if (beatSpaceLinkAllChannels)
+    {
+        applyBeatSpaceLinkedChannelOffsets(
+            beatSpaceChannelPoints[static_cast<size_t>(beatSpaceSelectedChannel)],
+            beatSpaceSelectedChannel);
+        applyBeatSpacePointToChannels(true, false);
+    }
+}
+
+void StepVstHostAudioProcessor::beatSpacePan(int dx, int dy)
+{
+    const int stepX = juce::jmax(1, getBeatSpaceViewWidth() / 8);
+    const int stepY = juce::jmax(1, getBeatSpaceViewHeight() / 6);
+    beatSpaceViewX += dx * stepX;
+    beatSpaceViewY += dy * stepY;
+    clampBeatSpaceView();
+}
+
+void StepVstHostAudioProcessor::setBeatSpaceMorphDurationMs(double durationMs)
+{
+    const double clamped = juce::jlimit(40.0, 2000.0, durationMs);
+    if (std::abs(beatSpaceMorphDurationMs - clamped) < 0.5)
+        return;
+    beatSpaceMorphDurationMs = clamped;
+    savePersistentControlPages();
+}
+
+double StepVstHostAudioProcessor::getBeatSpaceMorphDurationMs() const
+{
+    return beatSpaceMorphDurationMs;
+}
+
+void StepVstHostAudioProcessor::setBeatSpaceZoneLockStrength(int channel, float strength)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const float clampedStrength = juce::jlimit(0.0f, 1.0f, strength);
+    if (std::abs(beatSpaceZoneLockStrength[static_cast<size_t>(clampedChannel)] - clampedStrength) < 1.0e-4f)
+        return;
+    beatSpaceZoneLockStrength[static_cast<size_t>(clampedChannel)] = clampedStrength;
+    if (beatSpaceLinkAllChannels)
+    {
+        applyBeatSpaceLinkedChannelOffsets(
+            beatSpaceChannelPoints[static_cast<size_t>(beatSpaceSelectedChannel)],
+            beatSpaceSelectedChannel);
+    }
+    else
+    {
+        beatSpaceChannelPoints[static_cast<size_t>(clampedChannel)] =
+            constrainBeatSpacePointForChannel(
+                clampedChannel,
+                beatSpaceChannelPoints[static_cast<size_t>(clampedChannel)]);
+    }
+    applyBeatSpacePointToChannels(true, false);
+    savePersistentControlPages();
+}
+
+float StepVstHostAudioProcessor::getBeatSpaceZoneLockStrength(int channel) const
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    return juce::jlimit(
+        0.0f,
+        1.0f,
+        beatSpaceZoneLockStrength[static_cast<size_t>(clampedChannel)]);
+}
+
+void StepVstHostAudioProcessor::setBeatSpaceConfidenceOverlayEnabled(bool enabled)
+{
+    if (beatSpaceConfidenceOverlayEnabled == enabled)
+        return;
+    beatSpaceConfidenceOverlayEnabled = enabled;
+    savePersistentControlPages();
+}
+
+bool StepVstHostAudioProcessor::isBeatSpaceConfidenceOverlayEnabled() const
+{
+    return beatSpaceConfidenceOverlayEnabled;
+}
+
+void StepVstHostAudioProcessor::setBeatSpacePathOverlayEnabled(bool enabled)
+{
+    if (beatSpacePathOverlayEnabled == enabled)
+        return;
+    beatSpacePathOverlayEnabled = enabled;
+    savePersistentControlPages();
+}
+
+bool StepVstHostAudioProcessor::isBeatSpacePathOverlayEnabled() const
+{
+    return beatSpacePathOverlayEnabled;
+}
+
+void StepVstHostAudioProcessor::setBeatSpacePathRecordArmedChannel(int channel)
+{
+    const int clamped = (channel < 0) ? -1 : juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    if (beatSpacePathRecordArmedChannel == clamped)
+        return;
+    beatSpacePathRecordArmedChannel = clamped;
+    savePersistentControlPages();
+}
+
+int StepVstHostAudioProcessor::getBeatSpacePathRecordArmedChannel() const
+{
+    return beatSpacePathRecordArmedChannel;
+}
+
+bool StepVstHostAudioProcessor::beatSpaceAddBookmark(int channel, const juce::String& tag)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    auto& channelBookmarks = beatSpaceBookmarks[static_cast<size_t>(clampedChannel)];
+    const auto currentPoint =
+        clampBeatSpacePointToTable(beatSpaceChannelPoints[static_cast<size_t>(clampedChannel)]);
+    const auto trimmedTag = tag.trim();
+    juce::String effectiveTag = trimmedTag;
+    if (effectiveTag.isEmpty())
+        effectiveTag = "P " + juce::String(currentPoint.x) + "," + juce::String(currentPoint.y);
+
+    for (auto& bookmark : channelBookmarks)
+    {
+        if (bookmark.used && bookmark.point == currentPoint)
+        {
+            bookmark.tag = effectiveTag;
+            savePersistentControlPages();
+            return true;
+        }
+    }
+
+    for (auto& bookmark : channelBookmarks)
+    {
+        if (!bookmark.used)
+        {
+            bookmark.used = true;
+            bookmark.point = currentPoint;
+            bookmark.tag = effectiveTag;
+            savePersistentControlPages();
+            return true;
+        }
+    }
+
+    for (int i = 1; i < BeatSpaceBookmarkSlots; ++i)
+        channelBookmarks[static_cast<size_t>(i - 1)] = channelBookmarks[static_cast<size_t>(i)];
+    channelBookmarks[static_cast<size_t>(BeatSpaceBookmarkSlots - 1)].used = true;
+    channelBookmarks[static_cast<size_t>(BeatSpaceBookmarkSlots - 1)].point = currentPoint;
+    channelBookmarks[static_cast<size_t>(BeatSpaceBookmarkSlots - 1)].tag = effectiveTag;
+    savePersistentControlPages();
+    return true;
+}
+
+bool StepVstHostAudioProcessor::beatSpaceRecallBookmark(int channel, int bookmarkIndex, bool morph)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const int clampedBookmark = juce::jlimit(0, BeatSpaceBookmarkSlots - 1, bookmarkIndex);
+    const auto& bookmark = beatSpaceBookmarks[static_cast<size_t>(clampedChannel)][static_cast<size_t>(clampedBookmark)];
+    if (!bookmark.used)
+        return false;
+    beatSpaceSetChannelPoint(clampedChannel, bookmark.point, false, morph);
+    return true;
+}
+
+int StepVstHostAudioProcessor::getBeatSpaceBookmarkCount(int channel) const
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    int count = 0;
+    for (const auto& bookmark : beatSpaceBookmarks[static_cast<size_t>(clampedChannel)])
+    {
+        if (bookmark.used)
+            ++count;
+    }
+    return count;
+}
+
+juce::String StepVstHostAudioProcessor::getBeatSpaceBookmarkTag(int channel, int bookmarkIndex) const
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const int clampedBookmark = juce::jlimit(0, BeatSpaceBookmarkSlots - 1, bookmarkIndex);
+    const auto& bookmark = beatSpaceBookmarks[static_cast<size_t>(clampedChannel)][static_cast<size_t>(clampedBookmark)];
+    if (!bookmark.used)
+        return {};
+    return bookmark.tag;
+}
+
+void StepVstHostAudioProcessor::beatSpaceClearBookmarks(int channel)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    for (auto& bookmark : beatSpaceBookmarks[static_cast<size_t>(clampedChannel)])
+        bookmark = BeatSpaceBookmark{};
+    savePersistentControlPages();
+}
+
+std::vector<int> StepVstHostAudioProcessor::getBeatSpaceNearestPresetSlots(int channel, int count) const
+{
+    std::vector<int> result;
+    if (count <= 0)
+        return result;
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const int assignedSpace = getBeatSpaceChannelSpaceAssignment(clampedChannel);
+    if (!beatSpaceCategoryPresetPointsReady[static_cast<size_t>(assignedSpace)])
+        return result;
+
+    const auto currentPoint = clampBeatSpacePointToTable(beatSpaceChannelPoints[static_cast<size_t>(clampedChannel)]);
+    struct Candidate
+    {
+        int slot = 0;
+        float distance = 0.0f;
+    };
+    std::vector<Candidate> candidates;
+    candidates.reserve(static_cast<size_t>(BeatSpacePresetSlotsPerSpace));
+    for (int slot = 0; slot < BeatSpacePresetSlotsPerSpace; ++slot)
+    {
+        const auto p = beatSpaceCategoryPresetPoints[static_cast<size_t>(assignedSpace)][static_cast<size_t>(slot)];
+        const float dx = static_cast<float>(p.x - currentPoint.x);
+        const float dy = static_cast<float>(p.y - currentPoint.y);
+        candidates.push_back({ slot, std::sqrt((dx * dx) + (dy * dy)) });
+    }
+    std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b)
+    {
+        if (std::abs(a.distance - b.distance) < 1.0e-6f)
+            return a.slot < b.slot;
+        return a.distance < b.distance;
+    });
+    const int num = juce::jmin(count, static_cast<int>(candidates.size()));
+    result.reserve(static_cast<size_t>(num));
+    for (int i = 0; i < num; ++i)
+        result.push_back(candidates[static_cast<size_t>(i)].slot);
+    return result;
+}
+
+void StepVstHostAudioProcessor::beatSpacePathClear(int channel)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    beatSpacePaths[static_cast<size_t>(clampedChannel)] = BeatSpacePathState{};
+    savePersistentControlPages();
+}
+
+bool StepVstHostAudioProcessor::beatSpacePathAddCurrentPoint(int channel)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    auto& path = beatSpacePaths[static_cast<size_t>(clampedChannel)];
+    if (!path.recording)
+        path.recording = true;
+    const auto p = clampBeatSpacePointToTable(beatSpaceChannelPoints[static_cast<size_t>(clampedChannel)]);
+    if (path.count > 0 && path.points[static_cast<size_t>(path.count - 1)] == p)
+        return true;
+
+    if (path.count < BeatSpacePathMaxPoints)
+    {
+        path.points[static_cast<size_t>(path.count)] = p;
+        ++path.count;
+    }
+    else
+    {
+        for (int i = 1; i < BeatSpacePathMaxPoints; ++i)
+            path.points[static_cast<size_t>(i - 1)] = path.points[static_cast<size_t>(i)];
+        path.points[static_cast<size_t>(BeatSpacePathMaxPoints - 1)] = p;
+    }
+    savePersistentControlPages();
+    return true;
+}
+
+bool StepVstHostAudioProcessor::beatSpacePathStart(int channel, BeatSpacePathMode mode)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    auto& path = beatSpacePaths[static_cast<size_t>(clampedChannel)];
+    if (path.count < 2)
+        return false;
+
+    path.mode = mode;
+    path.cycleBeats = (mode == BeatSpacePathMode::QuarterNote) ? 0.25 : 4.0;
+    path.loopBars = (mode == BeatSpacePathMode::OneBar) ? 1 : 0;
+    path.active = true;
+    path.pendingQuantizedStart = false;
+    path.recording = false;
+    path.recordStartPpq = -1.0;
+    path.startMs = juce::Time::getMillisecondCounterHiRes();
+    path.startPpq = -1.0;
+    savePersistentControlPages();
+    return true;
+}
+
+void StepVstHostAudioProcessor::beatSpacePathStop(int channel)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    auto& path = beatSpacePaths[static_cast<size_t>(clampedChannel)];
+    if (!path.active)
+        return;
+    path.active = false;
+    path.pendingQuantizedStart = false;
+    path.recording = false;
+    savePersistentControlPages();
+}
+
+bool StepVstHostAudioProcessor::beatSpacePathIsActive(int channel) const
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    return beatSpacePaths[static_cast<size_t>(clampedChannel)].active;
+}
+
+bool StepVstHostAudioProcessor::beatSpacePathRecordStart(int channel, const juce::Point<int>& point)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const auto clampedPoint = clampBeatSpacePointToTable(point);
+    auto& path = beatSpacePaths[static_cast<size_t>(clampedChannel)];
+    path = BeatSpacePathState{};
+    path.mode = BeatSpacePathMode::OneBar;
+    path.cycleBeats = 8.0;
+    path.loopBars = 2;
+    path.count = 1;
+    path.points[0] = clampedPoint;
+    path.active = false;
+    path.recording = true;
+    path.pendingQuantizedStart = false;
+    path.recordStartPpq = std::numeric_limits<double>::quiet_NaN();
+    path.startPpq = -1.0;
+    path.startMs = juce::Time::getMillisecondCounterHiRes();
+
+    if (auto* playHead = getPlayHead())
+    {
+        if (auto position = playHead->getPosition())
+        {
+            if (position->getPpqPosition().hasValue())
+                path.recordStartPpq = *position->getPpqPosition();
+        }
+    }
+    if (!std::isfinite(path.recordStartPpq))
+        path.recordStartPpq = audioEngine->getTimelineBeat();
+
+    beatSpaceSetChannelPoint(clampedChannel, clampedPoint, false, false);
+    savePersistentControlPages();
+    return true;
+}
+
+bool StepVstHostAudioProcessor::beatSpacePathRecordAppendPoint(int channel, const juce::Point<int>& point)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    auto& path = beatSpacePaths[static_cast<size_t>(clampedChannel)];
+    if (!path.recording)
+        return false;
+
+    const auto clampedPoint = clampBeatSpacePointToTable(point);
+    if (path.count > 0 && path.points[static_cast<size_t>(path.count - 1)] == clampedPoint)
+        return true;
+
+    if (path.count < BeatSpacePathMaxPoints)
+    {
+        path.points[static_cast<size_t>(path.count)] = clampedPoint;
+        ++path.count;
+    }
+    else
+    {
+        for (int i = 1; i < BeatSpacePathMaxPoints; ++i)
+            path.points[static_cast<size_t>(i - 1)] = path.points[static_cast<size_t>(i)];
+        path.points[static_cast<size_t>(BeatSpacePathMaxPoints - 1)] = clampedPoint;
+    }
+
+    beatSpaceSetChannelPoint(clampedChannel, clampedPoint, false, false);
+    return true;
+}
+
+bool StepVstHostAudioProcessor::beatSpacePathRecordFinishAndPlay(int channel)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    auto& path = beatSpacePaths[static_cast<size_t>(clampedChannel)];
+    if (!path.recording)
+        return false;
+
+    path.recording = false;
+    if (path.count < 2)
+    {
+        path.active = false;
+        path.pendingQuantizedStart = false;
+        savePersistentControlPages();
+        return false;
+    }
+
+    const double nowMs = juce::Time::getMillisecondCounterHiRes();
+    double nowPpq = std::numeric_limits<double>::quiet_NaN();
+    double bpm = 120.0;
+    if (auto* playHead = getPlayHead())
+    {
+        if (auto position = playHead->getPosition())
+        {
+            if (position->getPpqPosition().hasValue())
+                nowPpq = *position->getPpqPosition();
+            if (position->getBpm().hasValue() && *position->getBpm() > 0.0)
+                bpm = *position->getBpm();
+        }
+    }
+    if (!std::isfinite(nowPpq))
+        nowPpq = audioEngine->getTimelineBeat();
+
+    double recordedBeats = 0.0;
+    if (std::isfinite(path.recordStartPpq) && std::isfinite(nowPpq))
+    {
+        recordedBeats = juce::jmax(0.25, nowPpq - path.recordStartPpq);
+    }
+    else
+    {
+        const double elapsedMs = juce::jmax(10.0, nowMs - path.startMs);
+        recordedBeats = juce::jmax(0.25, elapsedMs * (bpm / 60000.0));
+    }
+
+    const int roundedBars = juce::jmax(1, static_cast<int>(std::lround(recordedBeats / 4.0)));
+    int evenBars = static_cast<int>(2.0 * std::round(static_cast<double>(roundedBars) / 2.0));
+    evenBars = juce::jlimit(2, 32, juce::jmax(2, evenBars));
+
+    path.mode = BeatSpacePathMode::OneBar;
+    path.loopBars = evenBars;
+    path.cycleBeats = static_cast<double>(evenBars) * 4.0;
+    path.active = true;
+    path.startMs = nowMs;
+    path.startPpq = -1.0;
+    path.pendingQuantizedStart = false;
+    if (std::isfinite(nowPpq))
+    {
+        path.startPpq = (std::floor(nowPpq / 4.0) + 1.0) * 4.0;
+        path.pendingQuantizedStart = true;
+    }
+
+    beatSpaceSetChannelPoint(clampedChannel, path.points[0], false, true);
+    savePersistentControlPages();
+    return true;
+}
+
+void StepVstHostAudioProcessor::beatSpaceSetManualCategoryAnchor(int category, const juce::Point<int>& point)
+{
+    const int clampedCategory = juce::jlimit(0, BeatSpaceChannels - 1, category);
+    const juce::Point<int> clampedPoint {
+        juce::jlimit(0, BeatSpaceTableSize - 1, point.x),
+        juce::jlimit(0, BeatSpaceTableSize - 1, point.y)
+    };
+    const auto catIdx = static_cast<size_t>(clampedCategory);
+    auto& tagCount = beatSpaceCategoryManualTagCounts[catIdx];
+    auto& tags = beatSpaceCategoryManualTagPoints[catIdx];
+
+    bool duplicate = false;
+    for (int i = 0; i < tagCount; ++i)
+    {
+        if (tags[static_cast<size_t>(i)] == clampedPoint)
+        {
+            duplicate = true;
+            break;
+        }
+    }
+    if (!duplicate)
+    {
+        if (tagCount < BeatSpacePresetSlotsPerSpace)
+        {
+            tags[static_cast<size_t>(tagCount)] = clampedPoint;
+            ++tagCount;
+        }
+        else
+        {
+            for (int i = 1; i < BeatSpacePresetSlotsPerSpace; ++i)
+                tags[static_cast<size_t>(i - 1)] = tags[static_cast<size_t>(i)];
+            tags[static_cast<size_t>(BeatSpacePresetSlotsPerSpace - 1)] = clampedPoint;
+        }
+    }
+
+    if (tagCount > 0)
+    {
+        int sumX = 0;
+        int sumY = 0;
+        for (int i = 0; i < tagCount; ++i)
+        {
+            sumX += tags[static_cast<size_t>(i)].x;
+            sumY += tags[static_cast<size_t>(i)].y;
+        }
+        beatSpaceCategoryManualAnchors[catIdx] = {
+            juce::jlimit(0, BeatSpaceTableSize - 1, sumX / juce::jmax(1, tagCount)),
+            juce::jlimit(0, BeatSpaceTableSize - 1, sumY / juce::jmax(1, tagCount))
+        };
+        beatSpaceCategoryAnchorManual[catIdx] = true;
+    }
+
+    rebuildBeatSpaceCategoryAnchors();
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+        beatSpaceChannelPoints[static_cast<size_t>(i)] =
+            clampBeatSpacePointToTable(beatSpaceChannelPoints[static_cast<size_t>(i)]);
+
+    if (beatSpaceLinkAllChannels)
+    {
+        const int selectedChannel = juce::jlimit(0, BeatSpaceChannels - 1, beatSpaceSelectedChannel);
+        applyBeatSpaceLinkedChannelOffsets(
+            beatSpaceChannelPoints[static_cast<size_t>(selectedChannel)],
+            selectedChannel);
+    }
+
+    applyBeatSpacePointToChannels(true, false);
+    beatSpaceStatusMessage = "BeatSpace table loaded (manual tags fill category presets)";
+    savePersistentControlPages();
+}
+
+void StepVstHostAudioProcessor::beatSpaceClearManualCategoryAnchor(int category)
+{
+    const int clampedCategory = juce::jlimit(0, BeatSpaceChannels - 1, category);
+    const auto catIdx = static_cast<size_t>(clampedCategory);
+    if (beatSpaceCategoryManualTagCounts[catIdx] <= 0
+        && !beatSpaceCategoryAnchorManual[catIdx])
+        return;
+
+    beatSpaceCategoryManualTagCounts[catIdx] = 0;
+    beatSpaceCategoryAnchorManual[catIdx] = false;
+    beatSpaceCategoryManualTagPoints[catIdx].fill(beatSpaceCategoryManualAnchors[catIdx]);
+    rebuildBeatSpaceCategoryAnchors();
+
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+    {
+        beatSpaceChannelPoints[static_cast<size_t>(i)] =
+            clampBeatSpacePointToTable(beatSpaceChannelPoints[static_cast<size_t>(i)]);
+    }
+
+    if (beatSpaceLinkAllChannels)
+    {
+        const int selectedChannel = juce::jlimit(0, BeatSpaceChannels - 1, beatSpaceSelectedChannel);
+        applyBeatSpaceLinkedChannelOffsets(
+            beatSpaceChannelPoints[static_cast<size_t>(selectedChannel)],
+            selectedChannel);
+    }
+
+    applyBeatSpacePointToChannels(true, false);
+    savePersistentControlPages();
+}
+
+void StepVstHostAudioProcessor::beatSpaceClearAllManualCategoryAnchors()
+{
+    bool anyCleared = false;
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+    {
+        const auto idx = static_cast<size_t>(i);
+        if (beatSpaceCategoryManualTagCounts[idx] <= 0
+            && !beatSpaceCategoryAnchorManual[idx])
+            continue;
+        beatSpaceCategoryManualTagCounts[idx] = 0;
+        beatSpaceCategoryAnchorManual[idx] = false;
+        beatSpaceCategoryManualTagPoints[idx].fill(beatSpaceCategoryManualAnchors[idx]);
+        anyCleared = true;
+    }
+    if (!anyCleared)
+        return;
+
+    rebuildBeatSpaceCategoryAnchors();
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+    {
+        beatSpaceChannelPoints[static_cast<size_t>(i)] =
+            clampBeatSpacePointToTable(beatSpaceChannelPoints[static_cast<size_t>(i)]);
+    }
+
+    if (beatSpaceLinkAllChannels)
+    {
+        const int selectedChannel = juce::jlimit(0, BeatSpaceChannels - 1, beatSpaceSelectedChannel);
+        applyBeatSpaceLinkedChannelOffsets(
+            beatSpaceChannelPoints[static_cast<size_t>(selectedChannel)],
+            selectedChannel);
+    }
+
+    applyBeatSpacePointToChannels(true, false);
+    savePersistentControlPages();
+}
+
+bool StepVstHostAudioProcessor::beatSpaceClearNearestManualCategoryAnchor(
+    const juce::Point<int>& point, int maxDistance)
+{
+    const auto clampedPoint = juce::Point<int> {
+        juce::jlimit(0, BeatSpaceTableSize - 1, point.x),
+        juce::jlimit(0, BeatSpaceTableSize - 1, point.y)
+    };
+    const float maxDistanceF = static_cast<float>(juce::jmax(1, maxDistance));
+
+    int bestCategory = -1;
+    int bestTagIndex = -1;
+    float bestDistance = maxDistanceF + 1.0f;
+    for (int category = 0; category < BeatSpaceChannels; ++category)
+    {
+        const auto catIdx = static_cast<size_t>(category);
+        const int tagCount = juce::jlimit(
+            0,
+            BeatSpacePresetSlotsPerSpace,
+            beatSpaceCategoryManualTagCounts[catIdx]);
+        for (int i = 0; i < tagCount; ++i)
+        {
+            const auto candidate = beatSpaceCategoryManualTagPoints[catIdx][static_cast<size_t>(i)];
+            const float dx = static_cast<float>(candidate.x - clampedPoint.x);
+            const float dy = static_cast<float>(candidate.y - clampedPoint.y);
+            const float distance = std::sqrt((dx * dx) + (dy * dy));
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                bestCategory = category;
+                bestTagIndex = i;
+            }
+        }
+    }
+
+    if (bestCategory < 0 || bestTagIndex < 0 || bestDistance > maxDistanceF)
+        return false;
+
+    const auto bestIdx = static_cast<size_t>(bestCategory);
+    auto& count = beatSpaceCategoryManualTagCounts[bestIdx];
+    auto& tags = beatSpaceCategoryManualTagPoints[bestIdx];
+    for (int i = bestTagIndex + 1; i < count; ++i)
+        tags[static_cast<size_t>(i - 1)] = tags[static_cast<size_t>(i)];
+    if (count > 0)
+        --count;
+
+    if (count > 0)
+    {
+        int sumX = 0;
+        int sumY = 0;
+        for (int i = 0; i < count; ++i)
+        {
+            sumX += tags[static_cast<size_t>(i)].x;
+            sumY += tags[static_cast<size_t>(i)].y;
+        }
+        beatSpaceCategoryManualAnchors[bestIdx] = {
+            juce::jlimit(0, BeatSpaceTableSize - 1, sumX / juce::jmax(1, count)),
+            juce::jlimit(0, BeatSpaceTableSize - 1, sumY / juce::jmax(1, count))
+        };
+        beatSpaceCategoryAnchorManual[bestIdx] = true;
+    }
+    else
+    {
+        beatSpaceCategoryAnchorManual[bestIdx] = false;
+    }
+
+    rebuildBeatSpaceCategoryAnchors();
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+        beatSpaceChannelPoints[static_cast<size_t>(i)] =
+            clampBeatSpacePointToTable(beatSpaceChannelPoints[static_cast<size_t>(i)]);
+    if (beatSpaceLinkAllChannels)
+    {
+        const int selectedChannel = juce::jlimit(0, BeatSpaceChannels - 1, beatSpaceSelectedChannel);
+        applyBeatSpaceLinkedChannelOffsets(
+            beatSpaceChannelPoints[static_cast<size_t>(selectedChannel)],
+            selectedChannel);
+    }
+    applyBeatSpacePointToChannels(true, false);
+    savePersistentControlPages();
+    return true;
+}
+
+void StepVstHostAudioProcessor::beatSpaceSetPointFromGridCell(
+    int gridX, int gridY, int gridWidth, int gridHeight)
+{
+    if (!beatSpaceDecoderReady || beatSpaceTable.empty())
+        return;
+    beatSpaceSetChannelPoint(
+        beatSpaceSelectedChannel,
+        gridCellToBeatSpacePoint(gridX, gridY, gridWidth, gridHeight),
+        beatSpaceLinkAllChannels,
+        true);
+}
+
+void StepVstHostAudioProcessor::beatSpaceSetChannelPoint(
+    int channel,
+    const juce::Point<int>& point,
+    bool moveLinkedGroup,
+    bool morph)
+{
+    if (!beatSpaceDecoderReady || beatSpaceTable.empty())
+        return;
+
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const auto clampedPoint = clampBeatSpacePointToTable(point);
+
+    if (beatSpaceLinkAllChannels && moveLinkedGroup)
+    {
+        if (!beatSpaceLinkedOffsetsReady)
+            rebuildBeatSpaceLinkedOffsetsFromCurrent(clampedChannel);
+        applyBeatSpaceLinkedChannelOffsets(clampedPoint, clampedChannel);
+        applyBeatSpacePointToChannels(true, morph);
+        return;
+    }
+
+    beatSpaceChannelPoints[static_cast<size_t>(clampedChannel)] = clampedPoint;
+
+    if (beatSpaceLinkAllChannels)
+    {
+        const int anchorChannel = juce::jlimit(0, BeatSpaceChannels - 1, beatSpaceSelectedChannel);
+        const auto anchorPoint = clampBeatSpacePointToTable(beatSpaceChannelPoints[static_cast<size_t>(anchorChannel)]);
+        beatSpaceLinkedOffsets[static_cast<size_t>(clampedChannel)] = {
+            static_cast<float>(clampedPoint.x - anchorPoint.x),
+            static_cast<float>(clampedPoint.y - anchorPoint.y)
+        };
+        beatSpaceLinkedOffsets[static_cast<size_t>(anchorChannel)] = { 0.0f, 0.0f };
+        beatSpaceLinkedOffsetsReady = true;
+        applyBeatSpacePointToChannels(true, morph);
+        return;
+    }
+
+    const int previousSelected = beatSpaceSelectedChannel;
+    beatSpaceSelectedChannel = clampedChannel;
+    applyBeatSpacePointToChannels(false, morph);
+    beatSpaceSelectedChannel = previousSelected;
+}
+
+int StepVstHostAudioProcessor::getLaneMidiChannel(int stripIndex) const
 {
     if (stripIndex < 0 || stripIndex >= MaxStrips)
         return 1;
     return juce::jlimit(1, 16, laneMidiChannel[static_cast<size_t>(stripIndex)].load(std::memory_order_relaxed));
 }
 
-int MlrVSTAudioProcessor::getLaneMidiNote(int stripIndex) const
+int StepVstHostAudioProcessor::getLaneMidiNote(int stripIndex) const
 {
     if (stripIndex < 0 || stripIndex >= MaxStrips)
         return 60;
     return juce::jlimit(0, 127, laneMidiNote[static_cast<size_t>(stripIndex)].load(std::memory_order_relaxed));
 }
 
-void MlrVSTAudioProcessor::setLaneMidiChannel(int stripIndex, int channel)
+void StepVstHostAudioProcessor::setLaneMidiChannel(int stripIndex, int channel)
 {
     if (stripIndex < 0 || stripIndex >= MaxStrips)
         return;
     laneMidiChannel[static_cast<size_t>(stripIndex)].store(juce::jlimit(1, 16, channel), std::memory_order_relaxed);
 }
 
-void MlrVSTAudioProcessor::setLaneMidiNote(int stripIndex, int note)
+void StepVstHostAudioProcessor::setLaneMidiNote(int stripIndex, int note)
 {
     if (stripIndex < 0 || stripIndex >= MaxStrips)
         return;
     laneMidiNote[static_cast<size_t>(stripIndex)].store(juce::jlimit(0, 127, note), std::memory_order_relaxed);
 }
 
-void MlrVSTAudioProcessor::buildHostedLaneMidi(const juce::AudioPlayHead::PositionInfo& posInfo,
+void StepVstHostAudioProcessor::queueHostedProgramChangeForStrip(int stripIndex, int deltaPrograms)
+{
+    if (stripIndex < 0 || stripIndex >= MaxStrips)
+        return;
+
+    const int delta = juce::jlimit(-32, 32, deltaPrograms);
+    if (delta == 0)
+        return;
+
+    hostedPendingProgramDelta[static_cast<size_t>(stripIndex)].fetch_add(delta, std::memory_order_relaxed);
+}
+
+void StepVstHostAudioProcessor::buildHostedLaneMidi(const juce::AudioPlayHead::PositionInfo& posInfo,
                                                int numSamples,
                                                juce::MidiBuffer& midi)
 {
     midi.clear();
-    if (!audioEngine || numSamples <= 0 || !posInfo.getIsPlaying())
+    if (!audioEngine || numSamples <= 0)
         return;
+
+    auto* hostedInstance = hostRack.getInstance();
+    const juce::Array<juce::AudioProcessorParameter*>* hostedParams =
+        (hostedInstance != nullptr) ? &hostedInstance->getParameters() : nullptr;
+    std::array<bool, MaxStrips> hostedStripMuted{};
+    bool anyStripSolo = false;
+    for (int stripIndex = 0; stripIndex < MaxStrips; ++stripIndex)
+    {
+        if (auto* strip = audioEngine->getStrip(stripIndex))
+            anyStripSolo = anyStripSolo || strip->isSolo();
+    }
+    for (int stripIndex = 0; stripIndex < MaxStrips; ++stripIndex)
+    {
+        auto* strip = audioEngine->getStrip(stripIndex);
+        const bool stripMuted = (strip == nullptr) ? true : strip->isMuted();
+        const bool stripMutedBySolo = anyStripSolo && (strip == nullptr || !strip->isSolo());
+        hostedStripMuted[static_cast<size_t>(stripIndex)] = stripMuted || stripMutedBySolo;
+    }
+
+    auto applyHostedParameter = [hostedParams](
+        int paramIndex,
+        float normalizedValue,
+        float& cachedLastValue)
+    {
+        if (hostedParams == nullptr)
+            return false;
+        if (paramIndex < 0 || paramIndex >= hostedParams->size())
+            return false;
+        auto* param = (*hostedParams)[paramIndex];
+        if (param == nullptr)
+            return false;
+
+        float normalized = juce::jlimit(0.0f, 1.0f, normalizedValue);
+        const int steps = param->getNumSteps();
+        if (steps > 1 && steps <= 4096)
+        {
+            const float denom = static_cast<float>(steps - 1);
+            if (denom > 0.0f)
+                normalized = std::round(normalized * denom) / denom;
+        }
+
+        if (cachedLastValue < 0.0f || std::abs(cachedLastValue - normalized) > 1.0e-5f)
+        {
+            param->setValueNotifyingHost(normalized);
+            cachedLastValue = normalized;
+        }
+        return true;
+    };
+
+    for (int stripIndex = 0; stripIndex < MaxStrips; ++stripIndex)
+    {
+        const auto idx = static_cast<size_t>(stripIndex);
+        const int channel = getLaneMidiChannel(stripIndex);
+        auto* strip = audioEngine->getStrip(stripIndex);
+        const bool stripOutputMuted = hostedStripMuted[idx];
+
+        const float volumeRaw = juce::jlimit(
+            0.0f, 1.0f,
+            stripVolumeParams[idx] != nullptr
+                ? stripVolumeParams[idx]->load(std::memory_order_acquire)
+                : (strip != nullptr ? strip->getVolume() : 1.0f));
+        const float volume = stripOutputMuted ? 0.0f : volumeRaw;
+
+        const bool volumeMapped = applyHostedParameter(
+            hostedDirectParamVolume[idx],
+            volume,
+            hostedLastDirectParamVolume[idx]);
+
+        if (volumeMapped)
+        {
+            hostedLastCcVolume[idx] = -1;
+        }
+        else
+        {
+            const int ccVolume = juce::jlimit(0, 127, static_cast<int>(std::round(volume * 127.0f)));
+            if (ccVolume != hostedLastCcVolume[idx])
+            {
+                midi.addEvent(juce::MidiMessage::controllerEvent(channel, kHostedCcVolume, ccVolume), 0);
+                hostedLastCcVolume[idx] = ccVolume;
+            }
+        }
+
+        const float pan = juce::jlimit(
+            -1.0f, 1.0f,
+            stripPanParams[idx] != nullptr
+                ? stripPanParams[idx]->load(std::memory_order_acquire)
+                : (strip != nullptr ? strip->getPan() : 0.0f));
+
+        const bool panMapped = applyHostedParameter(
+            hostedDirectParamPan[idx],
+            juce::jlimit(0.0f, 1.0f, (pan + 1.0f) * 0.5f),
+            hostedLastDirectParamPan[idx]);
+
+        if (panMapped)
+        {
+            hostedLastCcPan[idx] = -1;
+        }
+        else
+        {
+            const int ccPan = juce::jlimit(0, 127, static_cast<int>(std::round(((pan + 1.0f) * 0.5f) * 127.0f)));
+            if (ccPan != hostedLastCcPan[idx])
+            {
+                midi.addEvent(juce::MidiMessage::controllerEvent(channel, kHostedCcPan, ccPan), 0);
+                hostedLastCcPan[idx] = ccPan;
+            }
+        }
+
+        const float pitchSemitones = juce::jlimit(
+            -24.0f, 24.0f,
+            stripPitchParams[idx] != nullptr
+                ? stripPitchParams[idx]->load(std::memory_order_acquire)
+                : (strip != nullptr ? strip->getPitchShift() : 0.0f));
+
+        const bool pitchMapped = applyHostedParameter(
+            hostedDirectParamPitch[idx],
+            juce::jlimit(0.0f, 1.0f, (pitchSemitones + 24.0f) / 48.0f),
+            hostedLastDirectParamPitch[idx]);
+
+        if (pitchMapped)
+        {
+            hostedLastCcPitch[idx] = -1;
+        }
+        else
+        {
+            const int ccPitch = juce::jlimit(0, 127, static_cast<int>(std::round(((pitchSemitones + 24.0f) / 48.0f) * 127.0f)));
+            if (ccPitch != hostedLastCcPitch[idx])
+            {
+                midi.addEvent(juce::MidiMessage::controllerEvent(channel, kHostedCcPitch, ccPitch), 0);
+                hostedLastCcPitch[idx] = ccPitch;
+            }
+        }
+
+        const float attackMs = juce::jlimit(
+            0.0f, 400.0f,
+            stripStepAttackParams[idx] != nullptr
+                ? stripStepAttackParams[idx]->load(std::memory_order_acquire)
+                : (strip != nullptr ? strip->getStepEnvelopeAttackMs() : 0.0f));
+        const float decayMs = juce::jlimit(
+            1.0f, 4000.0f,
+            stripStepDecayParams[idx] != nullptr
+                ? stripStepDecayParams[idx]->load(std::memory_order_acquire)
+                : (strip != nullptr ? strip->getStepEnvelopeDecayMs() : 4000.0f));
+        const float releaseMs = juce::jlimit(
+            1.0f, 4000.0f,
+            stripStepReleaseParams[idx] != nullptr
+                ? stripStepReleaseParams[idx]->load(std::memory_order_acquire)
+                : (strip != nullptr ? strip->getStepEnvelopeReleaseMs() : 110.0f));
+
+        const float attackNorm = juce::jlimit(0.0f, 1.0f, attackMs / 400.0f);
+        const float decayNorm = juce::jlimit(0.0f, 1.0f, (decayMs - 1.0f) / 3999.0f);
+        const float releaseNorm = juce::jlimit(0.0f, 1.0f, (releaseMs - 1.0f) / 3999.0f);
+
+        const bool attackMapped = applyHostedParameter(
+            hostedDirectParamAttack[idx],
+            attackNorm,
+            hostedLastDirectParamAttack[idx]);
+        const bool attackAuxMapped = applyHostedParameter(
+            hostedDirectParamAttackAux[idx],
+            attackNorm,
+            hostedLastDirectParamAttackAux[idx]);
+        const bool decayMapped = applyHostedParameter(
+            hostedDirectParamDecay[idx],
+            decayNorm,
+            hostedLastDirectParamDecay[idx]);
+        const bool releaseMapped = applyHostedParameter(
+            hostedDirectParamRelease[idx],
+            releaseNorm,
+            hostedLastDirectParamRelease[idx]);
+
+        juce::ignoreUnused(attackMapped, attackAuxMapped, decayMapped, releaseMapped);
+
+        const int pendingProgramDelta = hostedPendingProgramDelta[idx].exchange(0, std::memory_order_relaxed);
+        if (pendingProgramDelta != 0)
+        {
+            int nextProgram = hostedProgramNumber[idx] + pendingProgramDelta;
+            nextProgram %= 128;
+            if (nextProgram < 0)
+                nextProgram += 128;
+            hostedProgramNumber[idx] = nextProgram;
+            midi.addEvent(juce::MidiMessage::programChange(channel, nextProgram), 0);
+        }
+    }
+
+    if (!posInfo.getIsPlaying())
+    {
+        for (int stripIndex = 0; stripIndex < MaxStrips; ++stripIndex)
+        {
+            const auto idx = static_cast<size_t>(stripIndex);
+            hostedTraversalRatioAtLastTick[idx] = -1.0;
+            hostedTraversalPhaseOffsetTicks[idx] = 0.0;
+        }
+        return;
+    }
 
     const double bpm = (posInfo.getBpm().hasValue() && *posInfo.getBpm() > 1.0)
         ? *posInfo.getBpm()
         : 120.0;
     const double sampleRate = juce::jmax(1.0, currentSampleRate);
     const double samplesPerBeat = sampleRate * 60.0 / bpm;
-    double ppqStart = audioEngine->getTimelineBeat();
+    double ppqStartRaw = audioEngine->getTimelineBeat();
     if (posInfo.getPpqPosition().hasValue())
-        ppqStart = *posInfo.getPpqPosition();
-    const double ppqEnd = ppqStart + (static_cast<double>(numSamples) / samplesPerBeat);
+        ppqStartRaw = *posInfo.getPpqPosition();
+    const double ppqEndRaw = ppqStartRaw + (static_cast<double>(numSamples) / samplesPerBeat);
 
-    constexpr double kStepBeats = 0.25; // 16th-note grid
     constexpr double kMinBeatEpsilon = 1.0e-9;
     constexpr double kNoteLengthMs = 18.0;
     const int noteLengthSamples = juce::jmax(1, static_cast<int>((kNoteLengthMs * 0.001) * sampleRate));
 
-    auto probabilityPass = [](int stripIndex, int stepIndex, int subIndex, float probability)
+    auto applyStripSwingToPpq = [](const EnhancedAudioStrip& strip, double ppq)
+    {
+        const double swing = static_cast<double>(strip.getSwingAmount());
+        if (swing <= 1.0e-4)
+            return ppq;
+
+        const double unitBeats = [&strip]()
+        {
+            switch (strip.getSwingDivision())
+            {
+                case EnhancedAudioStrip::SwingDivision::Half: return 2.0;
+                case EnhancedAudioStrip::SwingDivision::Quarter: return 1.0;
+                case EnhancedAudioStrip::SwingDivision::Sixteenth: return 0.25;
+                case EnhancedAudioStrip::SwingDivision::ThirtySecond: return 0.125;
+                case EnhancedAudioStrip::SwingDivision::SixteenthTriplet: return 1.0 / 6.0;
+                case EnhancedAudioStrip::SwingDivision::Triplet: return 1.0 / 3.0;
+                case EnhancedAudioStrip::SwingDivision::Eighth:
+                default: return 0.5;
+            }
+        }();
+
+        const double pairLength = unitBeats * 2.0;
+        if (pairLength <= 1.0e-9)
+            return ppq;
+
+        const double pairIndex = std::floor(ppq / pairLength);
+        const double pairBase = pairIndex * pairLength;
+        const double pairPhase = ppq - pairBase;
+        const double shapedSwing = std::pow(juce::jlimit(0.0, 1.0, swing), 1.7);
+        const double splitShift = juce::jlimit(0.0, 0.72, shapedSwing * 0.72);
+        const double splitPoint = unitBeats * (1.0 + splitShift);
+
+        if (pairPhase < unitBeats)
+        {
+            const double t = pairPhase / juce::jmax(1.0e-9, unitBeats);
+            return pairBase + (splitPoint * t);
+        }
+
+        const double t = (pairPhase - unitBeats) / juce::jmax(1.0e-9, unitBeats);
+        return pairBase + splitPoint + ((pairLength - splitPoint) * t);
+    };
+
+    auto probabilityPass = [](int stripIndex, int64_t sequenceTick, int subIndex, float probability)
     {
         if (probability >= 0.9999f)
             return true;
         if (probability <= 0.0f)
             return false;
 
-        uint32_t seed = static_cast<uint32_t>(stripIndex + 1u) * 0x9e3779b9u
-                      ^ static_cast<uint32_t>(stepIndex + 1u) * 0x85ebca6bu
-                      ^ static_cast<uint32_t>(subIndex + 1u) * 0xc2b2ae35u;
+        const uint32_t tickHash = static_cast<uint32_t>(sequenceTick & 0xffffffffLL)
+            ^ static_cast<uint32_t>((sequenceTick >> 32) & 0xffffffffLL);
+        const uint32_t stripHash = static_cast<uint32_t>(stripIndex + 1);
+        const uint32_t subHash = static_cast<uint32_t>(subIndex + 1);
+        uint32_t seed = stripHash * 0x9e3779b9u
+                      ^ (tickHash + 1u) * 0x85ebca6bu
+                      ^ subHash * 0xc2b2ae35u;
         seed ^= (seed >> 16);
         seed *= 0x7feb352du;
         seed ^= (seed >> 15);
@@ -1902,30 +6372,80 @@ void MlrVSTAudioProcessor::buildHostedLaneMidi(const juce::AudioPlayHead::Positi
         return normalized <= probability;
     };
 
-    const int startStep = static_cast<int>(std::floor(ppqStart / kStepBeats));
-    const int endStep = static_cast<int>(std::floor(ppqEnd / kStepBeats));
-
     for (int stripIndex = 0; stripIndex < MaxStrips; ++stripIndex)
     {
+        const auto idx = static_cast<size_t>(stripIndex);
         auto* strip = audioEngine->getStrip(stripIndex);
         if (!strip || !strip->isPlaying() || strip->getPlayMode() != EnhancedAudioStrip::PlayMode::Step)
+            continue;
+        if (hostedStripMuted[idx])
             continue;
 
         const int totalSteps = juce::jmax(1, strip->getStepTotalSteps());
         const int channel = getLaneMidiChannel(stripIndex);
         const int note = getLaneMidiNote(stripIndex);
-
-        for (int absoluteStep = startStep; absoluteStep <= endStep; ++absoluteStep)
+        const double ppqStart = applyStripSwingToPpq(*strip, ppqStartRaw);
+        const double ppqEnd = applyStripSwingToPpq(*strip, ppqEndRaw);
+        const double stepTraversalRatio = juce::jmax(
+            0.125,
+            static_cast<double>(PlayheadSpeedQuantizer::quantizeRatio(strip->getPlayheadSpeedRatio())));
+        const double stepEventsPerPpq = juce::jmax(1.0e-6, 4.0 * stepTraversalRatio);
+        auto& traversalRatioAtLastTick = hostedTraversalRatioAtLastTick[idx];
+        auto& traversalPhaseOffsetTicks = hostedTraversalPhaseOffsetTicks[idx];
+        if (traversalRatioAtLastTick <= 0.0
+            || !std::isfinite(traversalRatioAtLastTick)
+            || std::abs(stepTraversalRatio - traversalRatioAtLastTick) > 1.0e-6)
         {
-            const double stepPpq = static_cast<double>(absoluteStep) * kStepBeats;
-            const int stepWithin = ((absoluteStep % totalSteps) + totalSteps) % totalSteps;
+            traversalRatioAtLastTick = stepTraversalRatio;
+        }
+        // Keep hosted step lanes strictly locked to host PPQ grid.
+        // Speed changes alter density/rate but never retain a phase offset.
+        traversalPhaseOffsetTicks = 0.0;
+
+        const double stepLengthPpq = 1.0 / stepEventsPerPpq;
+        const double sequenceStart = ppqStart * stepEventsPerPpq;
+        const double sequenceEnd = ppqEnd * stepEventsPerPpq;
+        int64_t startTick = static_cast<int64_t>(std::floor(sequenceStart));
+        int64_t endTick = static_cast<int64_t>(std::floor(sequenceEnd));
+        if (endTick < startTick)
+            std::swap(startTick, endTick);
+
+        for (int64_t sequenceTick = startTick; sequenceTick <= endTick; ++sequenceTick)
+        {
+            const double stepPpq = static_cast<double>(sequenceTick) / stepEventsPerPpq;
+            if (stepPpq < ppqStart || stepPpq >= (ppqEnd - kMinBeatEpsilon))
+                continue;
+
+            const int baseStep = static_cast<int>(((sequenceTick % totalSteps) + totalSteps) % totalSteps);
+            int stepWithin = baseStep;
+
+            switch (strip->getDirectionMode())
+            {
+                case EnhancedAudioStrip::DirectionMode::Reverse:
+                    stepWithin = (totalSteps - 1) - baseStep;
+                    break;
+                case EnhancedAudioStrip::DirectionMode::PingPong:
+                {
+                    const int pingPongLen = juce::jmax(1, totalSteps * 2);
+                    const int cycle = static_cast<int>(((sequenceTick % pingPongLen) + pingPongLen) % pingPongLen);
+                    stepWithin = (cycle < totalSteps) ? cycle : ((pingPongLen - 1) - cycle);
+                    break;
+                }
+                case EnhancedAudioStrip::DirectionMode::Normal:
+                case EnhancedAudioStrip::DirectionMode::Random:
+                case EnhancedAudioStrip::DirectionMode::RandomWalk:
+                case EnhancedAudioStrip::DirectionMode::RandomSlice:
+                default:
+                    stepWithin = baseStep;
+                    break;
+            }
 
             if (!strip->stepPattern[static_cast<size_t>(stepWithin)])
                 continue;
 
             const float probability = strip->getStepProbabilityAtIndex(stepWithin);
             const int subdivisions = juce::jmax(1, strip->getStepSubdivisionAtIndex(stepWithin));
-            const double subdivisionBeats = kStepBeats / static_cast<double>(subdivisions);
+            const double subdivisionBeats = stepLengthPpq / static_cast<double>(subdivisions);
             const float startVelocity = strip->getStepSubdivisionStartVelocityAtIndex(stepWithin);
             const float repeatVelocity = strip->getStepSubdivisionRepeatVelocityAtIndex(stepWithin);
 
@@ -1934,7 +6454,7 @@ void MlrVSTAudioProcessor::buildHostedLaneMidi(const juce::AudioPlayHead::Positi
                 const double hitPpq = stepPpq + (static_cast<double>(sub) * subdivisionBeats);
                 if (hitPpq < ppqStart || hitPpq >= (ppqEnd - kMinBeatEpsilon))
                     continue;
-                if (!probabilityPass(stripIndex, absoluteStep, sub, probability))
+                if (!probabilityPass(stripIndex, sequenceTick, sub, probability))
                     continue;
 
                 const double ratio = (subdivisions > 1)
@@ -1959,7 +6479,7 @@ void MlrVSTAudioProcessor::buildHostedLaneMidi(const juce::AudioPlayHead::Positi
 }
 
 //==============================================================================
-bool MlrVSTAudioProcessor::loadSampleToStrip(int stripIndex, const juce::File& file)
+bool StepVstHostAudioProcessor::loadSampleToStrip(int stripIndex, const juce::File& file)
 {
     if (file.existsAsFile() && stripIndex >= 0 && stripIndex < MaxStrips)
     {
@@ -1978,7 +6498,7 @@ bool MlrVSTAudioProcessor::loadSampleToStrip(int stripIndex, const juce::File& f
     return false;
 }
 
-void MlrVSTAudioProcessor::setPendingBarLengthApply(int stripIndex, bool pending)
+void StepVstHostAudioProcessor::setPendingBarLengthApply(int stripIndex, bool pending)
 {
     if (stripIndex < 0 || stripIndex >= MaxStrips)
         return;
@@ -1986,7 +6506,7 @@ void MlrVSTAudioProcessor::setPendingBarLengthApply(int stripIndex, bool pending
     pendingBarLengthApply[static_cast<size_t>(stripIndex)] = pending;
 }
 
-bool MlrVSTAudioProcessor::canChangeBarLengthNow(int stripIndex) const
+bool StepVstHostAudioProcessor::canChangeBarLengthNow(int stripIndex) const
 {
     if (!audioEngine || stripIndex < 0 || stripIndex >= MaxStrips)
         return false;
@@ -2013,7 +6533,7 @@ bool MlrVSTAudioProcessor::canChangeBarLengthNow(int stripIndex) const
     return false;
 }
 
-void MlrVSTAudioProcessor::requestBarLengthChange(int stripIndex, int bars)
+void StepVstHostAudioProcessor::requestBarLengthChange(int stripIndex, int bars)
 {
     if (!audioEngine || stripIndex < 0 || stripIndex >= MaxStrips)
         return;
@@ -2084,17 +6604,17 @@ void MlrVSTAudioProcessor::requestBarLengthChange(int stripIndex, int bars)
     // Resolve quantized target on the audio thread to avoid GUI/playhead clock skew.
 }
 
-int MlrVSTAudioProcessor::getQuantizeDivision() const
+int StepVstHostAudioProcessor::getQuantizeDivision() const
 {
     return 8;
 }
 
-float MlrVSTAudioProcessor::getInnerLoopLengthFactor() const
+float StepVstHostAudioProcessor::getInnerLoopLengthFactor() const
 {
     return 1.0f;
 }
 
-void MlrVSTAudioProcessor::queueLoopChange(int stripIndex, bool clearLoop, int startColumn, int endColumn, bool reverseDirection, int markerColumn)
+void StepVstHostAudioProcessor::queueLoopChange(int stripIndex, bool clearLoop, int startColumn, int endColumn, bool reverseDirection, int markerColumn)
 {
     if (!audioEngine || stripIndex < 0 || stripIndex >= MaxStrips)
         return;
@@ -2176,7 +6696,7 @@ void MlrVSTAudioProcessor::queueLoopChange(int stripIndex, bool clearLoop, int s
     pending.postClearTriggerColumn = 0;
 }
 
-void MlrVSTAudioProcessor::applyPendingLoopChanges(const juce::AudioPlayHead::PositionInfo& posInfo)
+void StepVstHostAudioProcessor::applyPendingLoopChanges(const juce::AudioPlayHead::PositionInfo& posInfo)
 {
     if (!audioEngine)
         return;
@@ -2310,7 +6830,7 @@ void MlrVSTAudioProcessor::applyPendingLoopChanges(const juce::AudioPlayHead::Po
     }
 }
 
-void MlrVSTAudioProcessor::applyPendingBarChanges(const juce::AudioPlayHead::PositionInfo& posInfo)
+void StepVstHostAudioProcessor::applyPendingBarChanges(const juce::AudioPlayHead::PositionInfo& posInfo)
 {
     if (!audioEngine)
         return;
@@ -2420,7 +6940,7 @@ void MlrVSTAudioProcessor::applyPendingBarChanges(const juce::AudioPlayHead::Pos
     }
 }
 
-void MlrVSTAudioProcessor::applyPendingStutterStart(const juce::AudioPlayHead::PositionInfo& posInfo)
+void StepVstHostAudioProcessor::applyPendingStutterStart(const juce::AudioPlayHead::PositionInfo& posInfo)
 {
     if (!audioEngine || pendingStutterStartActive.load(std::memory_order_acquire) == 0)
         return;
@@ -2502,7 +7022,7 @@ void MlrVSTAudioProcessor::applyPendingStutterStart(const juce::AudioPlayHead::P
     performMomentaryStutterStartNow(applyPpq, currentSample);
 }
 
-void MlrVSTAudioProcessor::applyPendingStutterRelease(const juce::AudioPlayHead::PositionInfo& posInfo)
+void StepVstHostAudioProcessor::applyPendingStutterRelease(const juce::AudioPlayHead::PositionInfo& posInfo)
 {
     if (!audioEngine || pendingStutterReleaseActive.load(std::memory_order_acquire) == 0)
         return;
@@ -2547,7 +7067,7 @@ void MlrVSTAudioProcessor::applyPendingStutterRelease(const juce::AudioPlayHead:
     performMomentaryStutterReleaseNow(applyPpq, currentSample);
 }
 
-void MlrVSTAudioProcessor::captureMomentaryStutterMacroBaseline()
+void StepVstHostAudioProcessor::captureMomentaryStutterMacroBaseline()
 {
     if (!audioEngine)
         return;
@@ -2591,7 +7111,7 @@ void MlrVSTAudioProcessor::captureMomentaryStutterMacroBaseline()
     momentaryStutterMacroCapturePending = false;
 }
 
-void MlrVSTAudioProcessor::applyMomentaryStutterMacro(const juce::AudioPlayHead::PositionInfo& posInfo)
+void StepVstHostAudioProcessor::applyMomentaryStutterMacro(const juce::AudioPlayHead::PositionInfo& posInfo)
 {
     if (!audioEngine
         || !momentaryStutterHoldActive
@@ -3548,7 +8068,7 @@ void MlrVSTAudioProcessor::applyMomentaryStutterMacro(const juce::AudioPlayHead:
     momentaryStutterLastComboMask = comboMask;
 }
 
-void MlrVSTAudioProcessor::restoreMomentaryStutterMacroBaseline()
+void StepVstHostAudioProcessor::restoreMomentaryStutterMacroBaseline()
 {
     if (!audioEngine || !momentaryStutterMacroBaselineCaptured)
         return;
@@ -3598,7 +8118,7 @@ void MlrVSTAudioProcessor::restoreMomentaryStutterMacroBaseline()
     momentaryStutterTwoButtonStepBase = 0;
 }
 
-juce::File MlrVSTAudioProcessor::getDefaultSampleDirectory(int stripIndex, SamplePathMode mode) const
+juce::File StepVstHostAudioProcessor::getDefaultSampleDirectory(int stripIndex, SamplePathMode mode) const
 {
     if (stripIndex < 0 || stripIndex >= MaxStrips)
         return {};
@@ -3607,7 +8127,7 @@ juce::File MlrVSTAudioProcessor::getDefaultSampleDirectory(int stripIndex, Sampl
     return mode == SamplePathMode::Step ? defaultStepDirectories[idx] : defaultLoopDirectories[idx];
 }
 
-MlrVSTAudioProcessor::SamplePathMode MlrVSTAudioProcessor::getSamplePathModeForStrip(int stripIndex) const
+StepVstHostAudioProcessor::SamplePathMode StepVstHostAudioProcessor::getSamplePathModeForStrip(int stripIndex) const
 {
     if (!audioEngine || stripIndex < 0 || stripIndex >= MaxStrips)
         return SamplePathMode::Loop;
@@ -3621,7 +8141,7 @@ MlrVSTAudioProcessor::SamplePathMode MlrVSTAudioProcessor::getSamplePathModeForS
     return SamplePathMode::Loop;
 }
 
-juce::File MlrVSTAudioProcessor::getCurrentBrowserDirectoryForStrip(int stripIndex) const
+juce::File StepVstHostAudioProcessor::getCurrentBrowserDirectoryForStrip(int stripIndex) const
 {
     if (stripIndex < 0 || stripIndex >= MaxStrips)
         return {};
@@ -3678,7 +8198,7 @@ juce::File MlrVSTAudioProcessor::getCurrentBrowserDirectoryForStrip(int stripInd
     return {};
 }
 
-juce::File MlrVSTAudioProcessor::getBrowserFavoriteDirectory(int slot) const
+juce::File StepVstHostAudioProcessor::getBrowserFavoriteDirectory(int slot) const
 {
     if (slot < 0 || slot >= BrowserFavoriteSlots)
         return {};
@@ -3686,7 +8206,7 @@ juce::File MlrVSTAudioProcessor::getBrowserFavoriteDirectory(int slot) const
     return browserFavoriteDirectories[static_cast<size_t>(slot)];
 }
 
-bool MlrVSTAudioProcessor::isBrowserFavoritePadHeld(int stripIndex, int slot) const
+bool StepVstHostAudioProcessor::isBrowserFavoritePadHeld(int stripIndex, int slot) const
 {
     if (stripIndex < 0 || stripIndex >= MaxStrips || slot < 0 || slot >= BrowserFavoriteSlots)
         return false;
@@ -3694,7 +8214,7 @@ bool MlrVSTAudioProcessor::isBrowserFavoritePadHeld(int stripIndex, int slot) co
     return browserFavoritePadHeld[static_cast<size_t>(stripIndex)][static_cast<size_t>(slot)];
 }
 
-bool MlrVSTAudioProcessor::isBrowserFavoriteSaveBurstActive(int slot, uint32_t nowMs) const
+bool StepVstHostAudioProcessor::isBrowserFavoriteSaveBurstActive(int slot, uint32_t nowMs) const
 {
     if (slot < 0 || slot >= BrowserFavoriteSlots)
         return false;
@@ -3702,7 +8222,7 @@ bool MlrVSTAudioProcessor::isBrowserFavoriteSaveBurstActive(int slot, uint32_t n
     return nowMs < browserFavoriteSaveBurstUntilMs[static_cast<size_t>(slot)];
 }
 
-bool MlrVSTAudioProcessor::isBrowserFavoriteMissingBurstActive(int slot, uint32_t nowMs) const
+bool StepVstHostAudioProcessor::isBrowserFavoriteMissingBurstActive(int slot, uint32_t nowMs) const
 {
     if (slot < 0 || slot >= BrowserFavoriteSlots)
         return false;
@@ -3710,7 +8230,7 @@ bool MlrVSTAudioProcessor::isBrowserFavoriteMissingBurstActive(int slot, uint32_
     return nowMs < browserFavoriteMissingBurstUntilMs[static_cast<size_t>(slot)];
 }
 
-void MlrVSTAudioProcessor::beginBrowserFavoritePadHold(int stripIndex, int slot)
+void StepVstHostAudioProcessor::beginBrowserFavoritePadHold(int stripIndex, int slot)
 {
     if (stripIndex < 0 || stripIndex >= MaxStrips || slot < 0 || slot >= BrowserFavoriteSlots)
         return;
@@ -3722,7 +8242,7 @@ void MlrVSTAudioProcessor::beginBrowserFavoritePadHold(int stripIndex, int slot)
     browserFavoritePadPressStartMs[stripIdx][slotIdx] = juce::Time::getMillisecondCounter();
 }
 
-void MlrVSTAudioProcessor::endBrowserFavoritePadHold(int stripIndex, int slot)
+void StepVstHostAudioProcessor::endBrowserFavoritePadHold(int stripIndex, int slot)
 {
     if (stripIndex < 0 || stripIndex >= MaxStrips || slot < 0 || slot >= BrowserFavoriteSlots)
         return;
@@ -3742,7 +8262,7 @@ void MlrVSTAudioProcessor::endBrowserFavoritePadHold(int stripIndex, int slot)
     browserFavoritePadHoldSaveTriggered[stripIdx][slotIdx] = false;
 }
 
-void MlrVSTAudioProcessor::setDefaultSampleDirectory(int stripIndex, SamplePathMode mode, const juce::File& directory)
+void StepVstHostAudioProcessor::setDefaultSampleDirectory(int stripIndex, SamplePathMode mode, const juce::File& directory)
 {
     if (stripIndex < 0 || stripIndex >= MaxStrips)
         return;
@@ -3770,7 +8290,7 @@ void MlrVSTAudioProcessor::setDefaultSampleDirectory(int stripIndex, SamplePathM
     savePersistentDefaultPaths();
 }
 
-bool MlrVSTAudioProcessor::saveBrowserFavoriteDirectoryFromStrip(int stripIndex, int slot)
+bool StepVstHostAudioProcessor::saveBrowserFavoriteDirectoryFromStrip(int stripIndex, int slot)
 {
     if (stripIndex < 0 || stripIndex >= MaxStrips || slot < 0 || slot >= BrowserFavoriteSlots)
         return false;
@@ -3784,7 +8304,7 @@ bool MlrVSTAudioProcessor::saveBrowserFavoriteDirectoryFromStrip(int stripIndex,
     return true;
 }
 
-bool MlrVSTAudioProcessor::recallBrowserFavoriteDirectoryForStrip(int stripIndex, int slot)
+bool StepVstHostAudioProcessor::recallBrowserFavoriteDirectoryForStrip(int stripIndex, int slot)
 {
     if (stripIndex < 0 || stripIndex >= MaxStrips || slot < 0 || slot >= BrowserFavoriteSlots)
         return false;
@@ -3804,7 +8324,7 @@ bool MlrVSTAudioProcessor::recallBrowserFavoriteDirectoryForStrip(int stripIndex
     return true;
 }
 
-bool MlrVSTAudioProcessor::isAudioFileSupported(const juce::File& file) const
+bool StepVstHostAudioProcessor::isAudioFileSupported(const juce::File& file) const
 {
     if (!file.existsAsFile())
         return false;
@@ -3817,7 +8337,7 @@ bool MlrVSTAudioProcessor::isAudioFileSupported(const juce::File& file) const
         || file.hasFileExtension(".flac");
 }
 
-void MlrVSTAudioProcessor::appendDefaultPathsToState(juce::ValueTree& state) const
+void StepVstHostAudioProcessor::appendDefaultPathsToState(juce::ValueTree& state) const
 {
     auto paths = state.getOrCreateChildWithName("DefaultPaths", nullptr);
     for (int i = 0; i < MaxStrips; ++i)
@@ -3836,7 +8356,7 @@ void MlrVSTAudioProcessor::appendDefaultPathsToState(juce::ValueTree& state) con
     }
 }
 
-void MlrVSTAudioProcessor::appendHostedLaneMidiToState(juce::ValueTree& state) const
+void StepVstHostAudioProcessor::appendHostedLaneMidiToState(juce::ValueTree& state) const
 {
     auto hostedMidi = state.getOrCreateChildWithName("HostedLaneMidi", nullptr);
     for (int i = 0; i < MaxStrips; ++i)
@@ -3848,7 +8368,7 @@ void MlrVSTAudioProcessor::appendHostedLaneMidiToState(juce::ValueTree& state) c
     }
 }
 
-void MlrVSTAudioProcessor::appendControlPagesToState(juce::ValueTree& state) const
+void StepVstHostAudioProcessor::appendControlPagesToState(juce::ValueTree& state) const
 {
     auto controlPages = state.getOrCreateChildWithName("ControlPages", nullptr);
     const auto orderSnapshot = getControlPageOrder();
@@ -3860,9 +8380,114 @@ void MlrVSTAudioProcessor::appendControlPagesToState(juce::ValueTree& state) con
 
     controlPages.setProperty("momentary", isControlPageMomentary(), nullptr);
     controlPages.setProperty("swingDivision", swingDivisionSelection.load(std::memory_order_acquire), nullptr);
+    controlPages.setProperty("beatSpaceMorphMs", beatSpaceMorphDurationMs, nullptr);
+    controlPages.setProperty("beatSpaceRandomMode", static_cast<int>(beatSpaceRandomizeMode), nullptr);
+    controlPages.setProperty("beatSpaceConfidenceOverlay", beatSpaceConfidenceOverlayEnabled, nullptr);
+    controlPages.setProperty("beatSpacePathOverlay", beatSpacePathOverlayEnabled, nullptr);
+    controlPages.setProperty("beatSpacePathArmedChannel", beatSpacePathRecordArmedChannel, nullptr);
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+    {
+        const auto idx = static_cast<size_t>(i);
+        controlPages.setProperty(
+            "beatSpaceZone" + juce::String(i),
+            beatSpaceChannelCategoryAssignment[idx],
+            nullptr);
+        controlPages.setProperty(
+            "beatSpaceZoneLock" + juce::String(i),
+            beatSpaceZoneLockStrength[idx],
+            nullptr);
+        controlPages.setProperty(
+            "beatSpaceManualCount" + juce::String(i),
+            beatSpaceCategoryManualTagCounts[idx],
+            nullptr);
+        controlPages.setProperty(
+            "beatSpaceManual" + juce::String(i),
+            beatSpaceCategoryAnchorManual[idx],
+            nullptr);
+        controlPages.setProperty(
+            "beatSpaceManualX" + juce::String(i),
+            beatSpaceCategoryManualAnchors[idx].x,
+            nullptr);
+        controlPages.setProperty(
+            "beatSpaceManualY" + juce::String(i),
+            beatSpaceCategoryManualAnchors[idx].y,
+            nullptr);
+        const int tagCount = juce::jlimit(
+            0,
+            BeatSpacePresetSlotsPerSpace,
+            beatSpaceCategoryManualTagCounts[idx]);
+        for (int slot = 0; slot < BeatSpacePresetSlotsPerSpace; ++slot)
+        {
+            const auto slotIdx = static_cast<size_t>(slot);
+            const auto p = (slot < tagCount)
+                ? beatSpaceCategoryManualTagPoints[idx][slotIdx]
+                : beatSpaceCategoryManualAnchors[idx];
+            controlPages.setProperty(
+                "beatSpaceTagX_" + juce::String(i) + "_" + juce::String(slot),
+                p.x,
+                nullptr);
+            controlPages.setProperty(
+                "beatSpaceTagY_" + juce::String(i) + "_" + juce::String(slot),
+                p.y,
+                nullptr);
+            controlPages.setProperty(
+                "beatSpacePresetOrder_" + juce::String(i) + "_" + juce::String(slot),
+                beatSpaceCategoryPresetOrder[idx][slotIdx],
+                nullptr);
+            controlPages.setProperty(
+                "beatSpacePresetHidden_" + juce::String(i) + "_" + juce::String(slot),
+                beatSpaceCategoryPresetHidden[idx][slotIdx],
+                nullptr);
+            controlPages.setProperty(
+                "beatSpacePresetLabel_" + juce::String(i) + "_" + juce::String(slot),
+                beatSpaceCategoryPresetLabels[idx][slotIdx],
+                nullptr);
+        }
+
+        const auto& path = beatSpacePaths[idx];
+        controlPages.setProperty("beatSpacePathCount" + juce::String(i), path.count, nullptr);
+        controlPages.setProperty("beatSpacePathActive" + juce::String(i), path.active, nullptr);
+        controlPages.setProperty("beatSpacePathMode" + juce::String(i), static_cast<int>(path.mode), nullptr);
+        controlPages.setProperty("beatSpacePathCycleBeats" + juce::String(i), path.cycleBeats, nullptr);
+        controlPages.setProperty("beatSpacePathLoopBars" + juce::String(i), path.loopBars, nullptr);
+        for (int p = 0; p < BeatSpacePathMaxPoints; ++p)
+        {
+            const auto& pathPoint = path.points[static_cast<size_t>(p)];
+            controlPages.setProperty(
+                "beatSpacePathX_" + juce::String(i) + "_" + juce::String(p),
+                pathPoint.x,
+                nullptr);
+            controlPages.setProperty(
+                "beatSpacePathY_" + juce::String(i) + "_" + juce::String(p),
+                pathPoint.y,
+                nullptr);
+        }
+
+        const auto& bookmarks = beatSpaceBookmarks[idx];
+        for (int b = 0; b < BeatSpaceBookmarkSlots; ++b)
+        {
+            const auto& bookmark = bookmarks[static_cast<size_t>(b)];
+            controlPages.setProperty(
+                "beatSpaceBookmarkUsed_" + juce::String(i) + "_" + juce::String(b),
+                bookmark.used,
+                nullptr);
+            controlPages.setProperty(
+                "beatSpaceBookmarkX_" + juce::String(i) + "_" + juce::String(b),
+                bookmark.point.x,
+                nullptr);
+            controlPages.setProperty(
+                "beatSpaceBookmarkY_" + juce::String(i) + "_" + juce::String(b),
+                bookmark.point.y,
+                nullptr);
+            controlPages.setProperty(
+                "beatSpaceBookmarkTag_" + juce::String(i) + "_" + juce::String(b),
+                bookmark.tag,
+                nullptr);
+        }
+    }
 }
 
-void MlrVSTAudioProcessor::loadDefaultPathsFromState(const juce::ValueTree& state)
+void StepVstHostAudioProcessor::loadDefaultPathsFromState(const juce::ValueTree& state)
 {
     auto paths = state.getChildWithName("DefaultPaths");
     if (!paths.isValid())
@@ -3901,7 +8526,7 @@ void MlrVSTAudioProcessor::loadDefaultPathsFromState(const juce::ValueTree& stat
     savePersistentDefaultPaths();
 }
 
-void MlrVSTAudioProcessor::loadHostedLaneMidiFromState(const juce::ValueTree& state)
+void StepVstHostAudioProcessor::loadHostedLaneMidiFromState(const juce::ValueTree& state)
 {
     auto hostedMidi = state.getChildWithName("HostedLaneMidi");
     if (!hostedMidi.isValid())
@@ -3918,7 +8543,7 @@ void MlrVSTAudioProcessor::loadHostedLaneMidiFromState(const juce::ValueTree& st
     }
 }
 
-void MlrVSTAudioProcessor::loadControlPagesFromState(const juce::ValueTree& state)
+void StepVstHostAudioProcessor::loadControlPagesFromState(const juce::ValueTree& state)
 {
     auto controlPages = state.getChildWithName("ControlPages");
     if (!controlPages.isValid())
@@ -3958,7 +8583,7 @@ void MlrVSTAudioProcessor::loadControlPagesFromState(const juce::ValueTree& stat
         ControlMode::Speed,
         ControlMode::Pan,
         ControlMode::Volume,
-        ControlMode::GrainSize,
+        ControlMode::Length,
         ControlMode::Swing,
         ControlMode::Gate,
         ControlMode::FileBrowser,
@@ -3966,6 +8591,7 @@ void MlrVSTAudioProcessor::loadControlPagesFromState(const juce::ValueTree& stat
         ControlMode::Filter,
         ControlMode::Pitch,
         ControlMode::Modulation,
+        ControlMode::BeatSpace,
         ControlMode::Preset,
         ControlMode::StepEdit
     };
@@ -3995,13 +8621,197 @@ void MlrVSTAudioProcessor::loadControlPagesFromState(const juce::ValueTree& stat
     controlPageMomentary.store(momentary, std::memory_order_release);
     const int swingDivision = static_cast<int>(controlPages.getProperty("swingDivision", 1));
     setSwingDivisionSelection(swingDivision);
+    beatSpaceMorphDurationMs = juce::jlimit(
+        40.0,
+        2000.0,
+        static_cast<double>(controlPages.getProperty("beatSpaceMorphMs", beatSpaceMorphDurationMs)));
+    beatSpaceRandomizeMode = static_cast<BeatSpaceRandomizeMode>(juce::jlimit(
+        0,
+        static_cast<int>(BeatSpaceRandomizeMode::FullWild),
+        static_cast<int>(controlPages.getProperty(
+            "beatSpaceRandomMode",
+            static_cast<int>(BeatSpaceRandomizeMode::WithinCategory)))));
+    beatSpaceConfidenceOverlayEnabled = static_cast<bool>(
+        controlPages.getProperty("beatSpaceConfidenceOverlay", beatSpaceConfidenceOverlayEnabled));
+    beatSpacePathOverlayEnabled = static_cast<bool>(
+        controlPages.getProperty("beatSpacePathOverlay", beatSpacePathOverlayEnabled));
+    beatSpacePathRecordArmedChannel = juce::jlimit(
+        -1,
+        BeatSpaceChannels - 1,
+        static_cast<int>(controlPages.getProperty("beatSpacePathArmedChannel", -1)));
+
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+    {
+        const auto idx = static_cast<size_t>(i);
+        const auto key = "beatSpaceZone" + juce::String(i);
+        const int fallbackZone = i;
+        const int zone = static_cast<int>(controlPages.getProperty(key, fallbackZone));
+        beatSpaceChannelCategoryAssignment[idx] =
+            juce::jlimit(0, BeatSpaceChannels - 1, zone);
+        beatSpaceZoneLockStrength[idx] = juce::jlimit(
+            0.0f,
+            1.0f,
+            static_cast<float>(controlPages.getProperty(
+                "beatSpaceZoneLock" + juce::String(i),
+                beatSpaceZoneLockStrength[idx])));
+
+        const int manualX = static_cast<int>(controlPages.getProperty(
+            "beatSpaceManualX" + juce::String(i),
+            beatSpaceCategoryManualAnchors[idx].x));
+        const int manualY = static_cast<int>(controlPages.getProperty(
+            "beatSpaceManualY" + juce::String(i),
+            beatSpaceCategoryManualAnchors[idx].y));
+        const bool legacyManual = static_cast<bool>(controlPages.getProperty(
+            "beatSpaceManual" + juce::String(i),
+            false));
+        const int storedCount = static_cast<int>(controlPages.getProperty(
+            "beatSpaceManualCount" + juce::String(i),
+            legacyManual ? 1 : 0));
+        int tagCount = juce::jlimit(0, BeatSpacePresetSlotsPerSpace, storedCount);
+        auto& tags = beatSpaceCategoryManualTagPoints[idx];
+        tags.fill({ manualX, manualY });
+
+        if (tagCount <= 0 && legacyManual)
+            tagCount = 1;
+
+        for (int slot = 0; slot < tagCount; ++slot)
+        {
+            const int tagX = static_cast<int>(controlPages.getProperty(
+                "beatSpaceTagX_" + juce::String(i) + "_" + juce::String(slot),
+                (slot == 0 ? manualX : beatSpaceCategoryManualAnchors[idx].x)));
+            const int tagY = static_cast<int>(controlPages.getProperty(
+                "beatSpaceTagY_" + juce::String(i) + "_" + juce::String(slot),
+                (slot == 0 ? manualY : beatSpaceCategoryManualAnchors[idx].y)));
+            tags[static_cast<size_t>(slot)] = {
+                juce::jlimit(0, BeatSpaceTableSize - 1, tagX),
+                juce::jlimit(0, BeatSpaceTableSize - 1, tagY)
+            };
+        }
+
+        for (int slot = 0; slot < BeatSpacePresetSlotsPerSpace; ++slot)
+        {
+            const auto slotIdx = static_cast<size_t>(slot);
+            beatSpaceCategoryPresetOrder[idx][slotIdx] = static_cast<int>(controlPages.getProperty(
+                "beatSpacePresetOrder_" + juce::String(i) + "_" + juce::String(slot),
+                slot));
+            beatSpaceCategoryPresetHidden[idx][slotIdx] = static_cast<bool>(controlPages.getProperty(
+                "beatSpacePresetHidden_" + juce::String(i) + "_" + juce::String(slot),
+                false));
+            beatSpaceCategoryPresetLabels[idx][slotIdx] = controlPages.getProperty(
+                "beatSpacePresetLabel_" + juce::String(i) + "_" + juce::String(slot),
+                "").toString();
+        }
+        normalizeBeatSpacePresetLayoutForSpace(i);
+
+        beatSpaceCategoryManualTagCounts[idx] = tagCount;
+        beatSpaceCategoryAnchorManual[idx] = (tagCount > 0);
+        beatSpaceCategoryManualAnchors[idx] = {
+            juce::jlimit(0, BeatSpaceTableSize - 1, manualX),
+            juce::jlimit(0, BeatSpaceTableSize - 1, manualY)
+        };
+        if (tagCount > 0)
+        {
+            int sumX = 0;
+            int sumY = 0;
+            for (int slot = 0; slot < tagCount; ++slot)
+            {
+                sumX += tags[static_cast<size_t>(slot)].x;
+                sumY += tags[static_cast<size_t>(slot)].y;
+            }
+            beatSpaceCategoryManualAnchors[idx] = {
+                juce::jlimit(0, BeatSpaceTableSize - 1, sumX / juce::jmax(1, tagCount)),
+                juce::jlimit(0, BeatSpaceTableSize - 1, sumY / juce::jmax(1, tagCount))
+            };
+        }
+
+        auto& path = beatSpacePaths[idx];
+        path.count = juce::jlimit(
+            0,
+            BeatSpacePathMaxPoints,
+            static_cast<int>(controlPages.getProperty("beatSpacePathCount" + juce::String(i), 0)));
+        path.active = static_cast<bool>(controlPages.getProperty("beatSpacePathActive" + juce::String(i), false));
+        path.mode = static_cast<BeatSpacePathMode>(juce::jlimit(
+            0,
+            static_cast<int>(BeatSpacePathMode::OneBar),
+            static_cast<int>(controlPages.getProperty(
+                "beatSpacePathMode" + juce::String(i),
+                static_cast<int>(BeatSpacePathMode::QuarterNote)))));
+        const double fallbackCycleBeats = (path.mode == BeatSpacePathMode::QuarterNote) ? 0.25 : 4.0;
+        const double storedCycleBeats = static_cast<double>(controlPages.getProperty(
+            "beatSpacePathCycleBeats" + juce::String(i),
+            fallbackCycleBeats));
+        path.cycleBeats = (storedCycleBeats > 0.0)
+            ? juce::jlimit(0.03125, 128.0, storedCycleBeats)
+            : fallbackCycleBeats;
+        path.loopBars = juce::jlimit(
+            0,
+            32,
+            static_cast<int>(controlPages.getProperty(
+                "beatSpacePathLoopBars" + juce::String(i),
+                (path.mode == BeatSpacePathMode::OneBar) ? 1 : 0)));
+        path.pendingQuantizedStart = false;
+        path.recording = false;
+        path.startMs = 0.0;
+        path.startPpq = -1.0;
+        path.recordStartPpq = -1.0;
+        for (int p = 0; p < BeatSpacePathMaxPoints; ++p)
+        {
+            const int px = static_cast<int>(controlPages.getProperty(
+                "beatSpacePathX_" + juce::String(i) + "_" + juce::String(p),
+                beatSpaceChannelPoints[idx].x));
+            const int py = static_cast<int>(controlPages.getProperty(
+                "beatSpacePathY_" + juce::String(i) + "_" + juce::String(p),
+                beatSpaceChannelPoints[idx].y));
+            path.points[static_cast<size_t>(p)] = {
+                juce::jlimit(0, BeatSpaceTableSize - 1, px),
+                juce::jlimit(0, BeatSpaceTableSize - 1, py)
+            };
+        }
+        if (path.count < 2)
+            path.active = false;
+
+        auto& bookmarks = beatSpaceBookmarks[idx];
+        for (int b = 0; b < BeatSpaceBookmarkSlots; ++b)
+        {
+            auto& bookmark = bookmarks[static_cast<size_t>(b)];
+            bookmark.used = static_cast<bool>(controlPages.getProperty(
+                "beatSpaceBookmarkUsed_" + juce::String(i) + "_" + juce::String(b),
+                false));
+            bookmark.point = {
+                juce::jlimit(0, BeatSpaceTableSize - 1, static_cast<int>(controlPages.getProperty(
+                    "beatSpaceBookmarkX_" + juce::String(i) + "_" + juce::String(b),
+                    beatSpaceChannelPoints[idx].x))),
+                juce::jlimit(0, BeatSpaceTableSize - 1, static_cast<int>(controlPages.getProperty(
+                    "beatSpaceBookmarkY_" + juce::String(i) + "_" + juce::String(b),
+                    beatSpaceChannelPoints[idx].y)))
+            };
+            bookmark.tag = controlPages.getProperty(
+                "beatSpaceBookmarkTag_" + juce::String(i) + "_" + juce::String(b),
+                "").toString();
+            if (bookmark.used && bookmark.tag.trim().isEmpty())
+                bookmark.tag = "P " + juce::String(bookmark.point.x) + "," + juce::String(bookmark.point.y);
+        }
+    }
+    rebuildBeatSpaceCategoryAnchors();
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+    {
+        beatSpaceChannelPoints[static_cast<size_t>(i)] =
+            clampBeatSpacePointToTable(beatSpaceChannelPoints[static_cast<size_t>(i)]);
+    }
+    if (beatSpaceLinkAllChannels)
+    {
+        const int selectedChannel = juce::jlimit(0, BeatSpaceChannels - 1, beatSpaceSelectedChannel);
+        applyBeatSpaceLinkedChannelOffsets(
+            beatSpaceChannelPoints[static_cast<size_t>(selectedChannel)],
+            selectedChannel);
+    }
     savePersistentControlPages();
 }
 
-void MlrVSTAudioProcessor::loadPersistentDefaultPaths()
+void StepVstHostAudioProcessor::loadPersistentDefaultPaths()
 {
     auto settingsFile = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-        .getChildFile("mlrVST")
+        .getChildFile("step-vsthost")
         .getChildFile("DefaultPaths.xml");
 
     if (!settingsFile.existsAsFile())
@@ -4045,10 +8855,10 @@ void MlrVSTAudioProcessor::loadPersistentDefaultPaths()
     }
 }
 
-void MlrVSTAudioProcessor::savePersistentDefaultPaths() const
+void StepVstHostAudioProcessor::savePersistentDefaultPaths() const
 {
     auto settingsDir = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-        .getChildFile("mlrVST");
+        .getChildFile("step-vsthost");
     if (!settingsDir.exists())
         settingsDir.createDirectory();
 
@@ -4068,7 +8878,7 @@ void MlrVSTAudioProcessor::savePersistentDefaultPaths() const
     xml.writeTo(settingsFile);
 }
 
-void MlrVSTAudioProcessor::loadPersistentControlPages()
+void StepVstHostAudioProcessor::loadPersistentControlPages()
 {
     const auto previousSuppress = suppressPersistentGlobalControlsSave.load(std::memory_order_acquire);
     suppressPersistentGlobalControlsSave.store(1, std::memory_order_release);
@@ -4086,7 +8896,7 @@ void MlrVSTAudioProcessor::loadPersistentControlPages()
         return;
     }
 
-    juce::ValueTree state("MlrVST");
+    juce::ValueTree state("StepVstHost");
     auto controlPages = juce::ValueTree("ControlPages");
     for (int i = 0; i < NumControlRowPages; ++i)
     {
@@ -4095,6 +8905,148 @@ void MlrVSTAudioProcessor::loadPersistentControlPages()
     }
     controlPages.setProperty("momentary", xml->getBoolAttribute("momentary", true), nullptr);
     controlPages.setProperty("swingDivision", xml->getIntAttribute("swingDivision", 1), nullptr);
+    controlPages.setProperty("beatSpaceMorphMs", xml->getDoubleAttribute("beatSpaceMorphMs", beatSpaceMorphDurationMs), nullptr);
+    controlPages.setProperty(
+        "beatSpaceRandomMode",
+        xml->getIntAttribute("beatSpaceRandomMode", static_cast<int>(BeatSpaceRandomizeMode::WithinCategory)),
+        nullptr);
+    controlPages.setProperty(
+        "beatSpaceConfidenceOverlay",
+        xml->getBoolAttribute("beatSpaceConfidenceOverlay", beatSpaceConfidenceOverlayEnabled),
+        nullptr);
+    controlPages.setProperty(
+        "beatSpacePathOverlay",
+        xml->getBoolAttribute("beatSpacePathOverlay", beatSpacePathOverlayEnabled),
+        nullptr);
+    controlPages.setProperty(
+        "beatSpacePathArmedChannel",
+        xml->getIntAttribute("beatSpacePathArmedChannel", -1),
+        nullptr);
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+    {
+        const auto idx = static_cast<size_t>(i);
+        controlPages.setProperty(
+            "beatSpaceZone" + juce::String(i),
+            xml->getIntAttribute("beatSpaceZone" + juce::String(i), i),
+            nullptr);
+        controlPages.setProperty(
+            "beatSpaceZoneLock" + juce::String(i),
+            xml->getDoubleAttribute("beatSpaceZoneLock" + juce::String(i), beatSpaceZoneLockStrength[idx]),
+            nullptr);
+        controlPages.setProperty(
+            "beatSpaceManualCount" + juce::String(i),
+            xml->getIntAttribute("beatSpaceManualCount" + juce::String(i), 0),
+            nullptr);
+        controlPages.setProperty(
+            "beatSpaceManual" + juce::String(i),
+            xml->getBoolAttribute("beatSpaceManual" + juce::String(i), false),
+            nullptr);
+        controlPages.setProperty(
+            "beatSpaceManualX" + juce::String(i),
+            xml->getIntAttribute("beatSpaceManualX" + juce::String(i), beatSpaceCategoryManualAnchors[idx].x),
+            nullptr);
+        controlPages.setProperty(
+            "beatSpaceManualY" + juce::String(i),
+            xml->getIntAttribute("beatSpaceManualY" + juce::String(i), beatSpaceCategoryManualAnchors[idx].y),
+            nullptr);
+        for (int slot = 0; slot < BeatSpacePresetSlotsPerSpace; ++slot)
+        {
+            controlPages.setProperty(
+                "beatSpaceTagX_" + juce::String(i) + "_" + juce::String(slot),
+                xml->getIntAttribute(
+                    "beatSpaceTagX_" + juce::String(i) + "_" + juce::String(slot),
+                    beatSpaceCategoryManualAnchors[idx].x),
+                nullptr);
+            controlPages.setProperty(
+                "beatSpaceTagY_" + juce::String(i) + "_" + juce::String(slot),
+                xml->getIntAttribute(
+                    "beatSpaceTagY_" + juce::String(i) + "_" + juce::String(slot),
+                    beatSpaceCategoryManualAnchors[idx].y),
+                nullptr);
+            controlPages.setProperty(
+                "beatSpacePresetOrder_" + juce::String(i) + "_" + juce::String(slot),
+                xml->getIntAttribute(
+                    "beatSpacePresetOrder_" + juce::String(i) + "_" + juce::String(slot),
+                    slot),
+                nullptr);
+            controlPages.setProperty(
+                "beatSpacePresetHidden_" + juce::String(i) + "_" + juce::String(slot),
+                xml->getBoolAttribute(
+                    "beatSpacePresetHidden_" + juce::String(i) + "_" + juce::String(slot),
+                    false),
+                nullptr);
+            controlPages.setProperty(
+                "beatSpacePresetLabel_" + juce::String(i) + "_" + juce::String(slot),
+                xml->getStringAttribute(
+                    "beatSpacePresetLabel_" + juce::String(i) + "_" + juce::String(slot),
+                    {}),
+                nullptr);
+        }
+
+        controlPages.setProperty(
+            "beatSpacePathCount" + juce::String(i),
+            xml->getIntAttribute("beatSpacePathCount" + juce::String(i), 0),
+            nullptr);
+        controlPages.setProperty(
+            "beatSpacePathActive" + juce::String(i),
+            xml->getBoolAttribute("beatSpacePathActive" + juce::String(i), false),
+            nullptr);
+        controlPages.setProperty(
+            "beatSpacePathMode" + juce::String(i),
+            xml->getIntAttribute(
+                "beatSpacePathMode" + juce::String(i),
+                static_cast<int>(BeatSpacePathMode::QuarterNote)),
+            nullptr);
+        controlPages.setProperty(
+            "beatSpacePathCycleBeats" + juce::String(i),
+            xml->getDoubleAttribute(
+                "beatSpacePathCycleBeats" + juce::String(i),
+                0.0),
+            nullptr);
+        controlPages.setProperty(
+            "beatSpacePathLoopBars" + juce::String(i),
+            xml->getIntAttribute("beatSpacePathLoopBars" + juce::String(i), 0),
+            nullptr);
+        for (int p = 0; p < BeatSpacePathMaxPoints; ++p)
+        {
+            controlPages.setProperty(
+                "beatSpacePathX_" + juce::String(i) + "_" + juce::String(p),
+                xml->getIntAttribute(
+                    "beatSpacePathX_" + juce::String(i) + "_" + juce::String(p),
+                    beatSpaceChannelPoints[idx].x),
+                nullptr);
+            controlPages.setProperty(
+                "beatSpacePathY_" + juce::String(i) + "_" + juce::String(p),
+                xml->getIntAttribute(
+                    "beatSpacePathY_" + juce::String(i) + "_" + juce::String(p),
+                    beatSpaceChannelPoints[idx].y),
+                nullptr);
+        }
+
+        for (int b = 0; b < BeatSpaceBookmarkSlots; ++b)
+        {
+            controlPages.setProperty(
+                "beatSpaceBookmarkUsed_" + juce::String(i) + "_" + juce::String(b),
+                xml->getBoolAttribute("beatSpaceBookmarkUsed_" + juce::String(i) + "_" + juce::String(b), false),
+                nullptr);
+            controlPages.setProperty(
+                "beatSpaceBookmarkX_" + juce::String(i) + "_" + juce::String(b),
+                xml->getIntAttribute(
+                    "beatSpaceBookmarkX_" + juce::String(i) + "_" + juce::String(b),
+                    beatSpaceChannelPoints[idx].x),
+                nullptr);
+            controlPages.setProperty(
+                "beatSpaceBookmarkY_" + juce::String(i) + "_" + juce::String(b),
+                xml->getIntAttribute(
+                    "beatSpaceBookmarkY_" + juce::String(i) + "_" + juce::String(b),
+                    beatSpaceChannelPoints[idx].y),
+                nullptr);
+            controlPages.setProperty(
+                "beatSpaceBookmarkTag_" + juce::String(i) + "_" + juce::String(b),
+                xml->getStringAttribute("beatSpaceBookmarkTag_" + juce::String(i) + "_" + juce::String(b), {}),
+                nullptr);
+        }
+    }
     state.addChild(controlPages, -1, nullptr);
 
     loadControlPagesFromState(state);
@@ -4102,13 +9054,18 @@ void MlrVSTAudioProcessor::loadPersistentControlPages()
     appendGlobalSettingsDiagnostic("load-control-pages", xml.get());
 }
 
-void MlrVSTAudioProcessor::loadPersistentGlobalControls()
+void StepVstHostAudioProcessor::loadPersistentGlobalControls()
 {
     auto xml = loadGlobalSettingsXml();
     if (xml == nullptr || xml->getTagName() != "GlobalSettings")
     {
         persistentGlobalControlsReady.store(1, std::memory_order_release);
         return;
+    }
+
+    {
+        const juce::ScopedLock lock(hostedInstrumentFileLock);
+        defaultHostedInstrumentFile = juce::File(xml->getStringAttribute("defaultHostedPluginPath"));
     }
 
     auto restoreFloatParam = [this, &xml](const char* attrName, const char* paramId, double minValue, double maxValue) -> bool
@@ -4168,7 +9125,7 @@ void MlrVSTAudioProcessor::loadPersistentGlobalControls()
     appendGlobalSettingsDiagnostic("load-globals", xml.get());
 }
 
-void MlrVSTAudioProcessor::savePersistentControlPages() const
+void StepVstHostAudioProcessor::savePersistentControlPages() const
 {
     if (suppressPersistentGlobalControlsSave.load(std::memory_order_acquire) != 0)
         return;
@@ -4181,6 +9138,94 @@ void MlrVSTAudioProcessor::savePersistentControlPages() const
     }
     xml.setAttribute("momentary", isControlPageMomentary());
     xml.setAttribute("swingDivision", swingDivisionSelection.load(std::memory_order_acquire));
+    xml.setAttribute("beatSpaceMorphMs", beatSpaceMorphDurationMs);
+    xml.setAttribute("beatSpaceRandomMode", static_cast<int>(beatSpaceRandomizeMode));
+    xml.setAttribute("beatSpaceConfidenceOverlay", beatSpaceConfidenceOverlayEnabled);
+    xml.setAttribute("beatSpacePathOverlay", beatSpacePathOverlayEnabled);
+    xml.setAttribute("beatSpacePathArmedChannel", beatSpacePathRecordArmedChannel);
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+    {
+        const auto idx = static_cast<size_t>(i);
+        xml.setAttribute(
+            "beatSpaceZone" + juce::String(i),
+            beatSpaceChannelCategoryAssignment[idx]);
+        xml.setAttribute(
+            "beatSpaceZoneLock" + juce::String(i),
+            static_cast<double>(beatSpaceZoneLockStrength[idx]));
+        xml.setAttribute(
+            "beatSpaceManualCount" + juce::String(i),
+            beatSpaceCategoryManualTagCounts[idx]);
+        xml.setAttribute(
+            "beatSpaceManual" + juce::String(i),
+            beatSpaceCategoryAnchorManual[idx]);
+        xml.setAttribute(
+            "beatSpaceManualX" + juce::String(i),
+            beatSpaceCategoryManualAnchors[idx].x);
+        xml.setAttribute(
+            "beatSpaceManualY" + juce::String(i),
+            beatSpaceCategoryManualAnchors[idx].y);
+        const int tagCount = juce::jlimit(
+            0,
+            BeatSpacePresetSlotsPerSpace,
+            beatSpaceCategoryManualTagCounts[idx]);
+        for (int slot = 0; slot < BeatSpacePresetSlotsPerSpace; ++slot)
+        {
+            const auto slotIdx = static_cast<size_t>(slot);
+            const auto p = (slot < tagCount)
+                ? beatSpaceCategoryManualTagPoints[idx][slotIdx]
+                : beatSpaceCategoryManualAnchors[idx];
+            xml.setAttribute(
+                "beatSpaceTagX_" + juce::String(i) + "_" + juce::String(slot),
+                p.x);
+            xml.setAttribute(
+                "beatSpaceTagY_" + juce::String(i) + "_" + juce::String(slot),
+                p.y);
+            xml.setAttribute(
+                "beatSpacePresetOrder_" + juce::String(i) + "_" + juce::String(slot),
+                beatSpaceCategoryPresetOrder[idx][slotIdx]);
+            xml.setAttribute(
+                "beatSpacePresetHidden_" + juce::String(i) + "_" + juce::String(slot),
+                beatSpaceCategoryPresetHidden[idx][slotIdx]);
+            xml.setAttribute(
+                "beatSpacePresetLabel_" + juce::String(i) + "_" + juce::String(slot),
+                beatSpaceCategoryPresetLabels[idx][slotIdx]);
+        }
+
+        const auto& path = beatSpacePaths[idx];
+        xml.setAttribute("beatSpacePathCount" + juce::String(i), path.count);
+        xml.setAttribute("beatSpacePathActive" + juce::String(i), path.active);
+        xml.setAttribute("beatSpacePathMode" + juce::String(i), static_cast<int>(path.mode));
+        xml.setAttribute("beatSpacePathCycleBeats" + juce::String(i), path.cycleBeats);
+        xml.setAttribute("beatSpacePathLoopBars" + juce::String(i), path.loopBars);
+        for (int p = 0; p < BeatSpacePathMaxPoints; ++p)
+        {
+            const auto& pathPoint = path.points[static_cast<size_t>(p)];
+            xml.setAttribute(
+                "beatSpacePathX_" + juce::String(i) + "_" + juce::String(p),
+                pathPoint.x);
+            xml.setAttribute(
+                "beatSpacePathY_" + juce::String(i) + "_" + juce::String(p),
+                pathPoint.y);
+        }
+
+        const auto& bookmarks = beatSpaceBookmarks[idx];
+        for (int b = 0; b < BeatSpaceBookmarkSlots; ++b)
+        {
+            const auto& bookmark = bookmarks[static_cast<size_t>(b)];
+            xml.setAttribute(
+                "beatSpaceBookmarkUsed_" + juce::String(i) + "_" + juce::String(b),
+                bookmark.used);
+            xml.setAttribute(
+                "beatSpaceBookmarkX_" + juce::String(i) + "_" + juce::String(b),
+                bookmark.point.x);
+            xml.setAttribute(
+                "beatSpaceBookmarkY_" + juce::String(i) + "_" + juce::String(b),
+                bookmark.point.y);
+            xml.setAttribute(
+                "beatSpaceBookmarkTag_" + juce::String(i) + "_" + juce::String(b),
+                bookmark.tag);
+        }
+    }
     if (masterVolumeParam)
         xml.setAttribute("masterVolume", static_cast<double>(masterVolumeParam->load(std::memory_order_acquire)));
     if (limiterThresholdParam)
@@ -4193,11 +9238,15 @@ void MlrVSTAudioProcessor::savePersistentControlPages() const
         xml.setAttribute("outputRouting", static_cast<int>(outputRoutingParam->load(std::memory_order_acquire)));
     if (soundTouchEnabledParam)
         xml.setAttribute("soundTouchEnabled", soundTouchEnabledParam->load(std::memory_order_acquire) >= 0.5f);
+    {
+        const juce::ScopedLock lock(hostedInstrumentFileLock);
+        xml.setAttribute("defaultHostedPluginPath", defaultHostedInstrumentFile.getFullPathName());
+    }
     saveGlobalSettingsXml(xml);
     appendGlobalSettingsDiagnostic("save-globals", &xml);
 }
 
-void MlrVSTAudioProcessor::triggerStrip(int stripIndex, int column)
+void StepVstHostAudioProcessor::triggerStrip(int stripIndex, int column)
 {
     if (!audioEngine) return;
     
@@ -4286,7 +9335,7 @@ void MlrVSTAudioProcessor::triggerStrip(int stripIndex, int column)
     if (kEnableTriggerDebugLogging)
     {
         juce::File logFile = juce::File::getSpecialLocation(juce::File::userDesktopDirectory)
-                               .getChildFile("mlrVST_COMPREHENSIVE_DEBUG.txt");
+                               .getChildFile("step-vsthost_debug.txt");
         juce::FileOutputStream stream(logFile, 1024);
         if (stream.openedOk())
         {
@@ -4362,7 +9411,7 @@ void MlrVSTAudioProcessor::triggerStrip(int stripIndex, int column)
     updateMonomeLEDs();
 }
 
-void MlrVSTAudioProcessor::stopStrip(int stripIndex)
+void StepVstHostAudioProcessor::stopStrip(int stripIndex)
 {
     if (auto* strip = audioEngine->getStrip(stripIndex))
     {
@@ -4370,28 +9419,30 @@ void MlrVSTAudioProcessor::stopStrip(int stripIndex)
     }
 }
 
-void MlrVSTAudioProcessor::setCurrentProgram(int /*index*/)
+void StepVstHostAudioProcessor::setCurrentProgram(int /*index*/)
 {
 }
 
-const juce::String MlrVSTAudioProcessor::getProgramName(int /*index*/)
+const juce::String StepVstHostAudioProcessor::getProgramName(int /*index*/)
 {
     return {};
 }
 
-void MlrVSTAudioProcessor::changeProgramName(int /*index*/, const juce::String& /*newName*/)
+void StepVstHostAudioProcessor::changeProgramName(int /*index*/, const juce::String& /*newName*/)
 {
 }
 
 // Helper method: Update filter LED visualization based on sub-page
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new MlrVSTAudioProcessor();
+    return new StepVstHostAudioProcessor();
 }
 
-void MlrVSTAudioProcessor::timerCallback()
+void StepVstHostAudioProcessor::timerCallback()
 {
     applyCompletedPresetSaves();
+    processPendingSubPresetApply();
+    updateBeatSpaceMorph();
 
     if (persistentGlobalControlsDirty.load(std::memory_order_acquire) != 0)
     {
@@ -4452,7 +9503,7 @@ void MlrVSTAudioProcessor::timerCallback()
     }
 }
 
-void MlrVSTAudioProcessor::loadAdjacentFile(int stripIndex, int direction)
+void StepVstHostAudioProcessor::loadAdjacentFile(int stripIndex, int direction)
 {
     if (stripIndex < 0 || stripIndex >= MaxStrips)
         return;
@@ -4600,7 +9651,7 @@ void MlrVSTAudioProcessor::loadAdjacentFile(int stripIndex, int direction)
 // Preset Management
 //==============================================================================
 
-void MlrVSTAudioProcessor::resetRuntimePresetStateToDefaults()
+void StepVstHostAudioProcessor::resetRuntimePresetStateToDefaults()
 {
     if (!audioEngine)
         return;
@@ -4732,6 +9783,12 @@ void MlrVSTAudioProcessor::resetRuntimePresetStateToDefaults()
             param->setValueNotifyingHost(param->getDefaultValue());
         if (auto* param = parameters.getParameter("stripPitch" + juce::String(i)))
             param->setValueNotifyingHost(param->getDefaultValue());
+        if (auto* param = parameters.getParameter("stripStepAttack" + juce::String(i)))
+            param->setValueNotifyingHost(param->getDefaultValue());
+        if (auto* param = parameters.getParameter("stripStepDecay" + juce::String(i)))
+            param->setValueNotifyingHost(param->getDefaultValue());
+        if (auto* param = parameters.getParameter("stripStepRelease" + juce::String(i)))
+            param->setValueNotifyingHost(param->getDefaultValue());
         if (auto* param = parameters.getParameter("stripSliceLength" + juce::String(i)))
             param->setValueNotifyingHost(param->getDefaultValue());
     }
@@ -4749,7 +9806,7 @@ void MlrVSTAudioProcessor::resetRuntimePresetStateToDefaults()
         audioEngine->clearPattern(i);
 }
 
-bool MlrVSTAudioProcessor::getHostSyncSnapshot(double& outPpq, double& outTempo) const
+bool StepVstHostAudioProcessor::getHostSyncSnapshot(double& outPpq, double& outTempo) const
 {
     if (auto* playHead = getPlayHead())
     {
@@ -4771,13 +9828,13 @@ bool MlrVSTAudioProcessor::getHostSyncSnapshot(double& outPpq, double& outTempo)
     return false;
 }
 
-void MlrVSTAudioProcessor::performPresetLoad(int presetIndex, double hostPpqSnapshot, double hostTempoSnapshot)
+void StepVstHostAudioProcessor::performPresetLoad(int presetIndex, double hostPpqSnapshot, double hostTempoSnapshot)
 {
     struct ScopedSuspendProcessing
     {
-        explicit ScopedSuspendProcessing(MlrVSTAudioProcessor& p) : processor(p) { processor.suspendProcessing(true); }
+        explicit ScopedSuspendProcessing(StepVstHostAudioProcessor& p) : processor(p) { processor.suspendProcessing(true); }
         ~ScopedSuspendProcessing() { processor.suspendProcessing(false); }
-        MlrVSTAudioProcessor& processor;
+        StepVstHostAudioProcessor& processor;
     } scopedSuspend(*this);
 
     // Always reset to a known clean runtime state before applying preset data.
@@ -4814,7 +9871,7 @@ void MlrVSTAudioProcessor::performPresetLoad(int presetIndex, double hostPpqSnap
     presetRefreshToken.fetch_add(1, std::memory_order_acq_rel);
 }
 
-bool MlrVSTAudioProcessor::runPresetSaveRequest(const PresetSaveRequest& request)
+bool StepVstHostAudioProcessor::runPresetSaveRequest(const PresetSaveRequest& request)
 {
     if (!audioEngine || request.presetIndex < 0 || request.presetIndex >= MaxPresetSlots)
         return false;
@@ -4823,9 +9880,9 @@ bool MlrVSTAudioProcessor::runPresetSaveRequest(const PresetSaveRequest& request
     {
         struct ScopedSuspendProcessing
         {
-            explicit ScopedSuspendProcessing(MlrVSTAudioProcessor& p) : processor(p) { processor.suspendProcessing(true); }
+            explicit ScopedSuspendProcessing(StepVstHostAudioProcessor& p) : processor(p) { processor.suspendProcessing(true); }
             ~ScopedSuspendProcessing() { processor.suspendProcessing(false); }
-            MlrVSTAudioProcessor& processor;
+            StepVstHostAudioProcessor& processor;
         } scopedSuspend(*this);
 
         return PresetStore::savePreset(request.presetIndex,
@@ -4846,7 +9903,7 @@ bool MlrVSTAudioProcessor::runPresetSaveRequest(const PresetSaveRequest& request
     }
 }
 
-void MlrVSTAudioProcessor::pushPresetSaveResult(const PresetSaveResult& result)
+void StepVstHostAudioProcessor::pushPresetSaveResult(const PresetSaveResult& result)
 {
     {
         const juce::ScopedLock lock(presetSaveResultLock);
@@ -4855,7 +9912,7 @@ void MlrVSTAudioProcessor::pushPresetSaveResult(const PresetSaveResult& result)
     presetSaveJobsInFlight.fetch_sub(1, std::memory_order_acq_rel);
 }
 
-void MlrVSTAudioProcessor::applyCompletedPresetSaves()
+void StepVstHostAudioProcessor::applyCompletedPresetSaves()
 {
     std::vector<PresetSaveResult> completed;
     {
@@ -4882,10 +9939,183 @@ void MlrVSTAudioProcessor::applyCompletedPresetSaves()
         presetRefreshToken.fetch_add(successfulSaves, std::memory_order_acq_rel);
 }
 
-void MlrVSTAudioProcessor::savePreset(int presetIndex)
+int StepVstHostAudioProcessor::getActiveMainPresetIndexForSubPresets() const
+{
+    if (loadedPresetIndex >= 0 && loadedPresetIndex < MaxPresetSlots)
+        return loadedPresetIndex;
+    return juce::jlimit(0, MaxPresetSlots - 1, activeMainPresetIndex);
+}
+
+int StepVstHostAudioProcessor::getSubPresetStoragePresetIndex(int mainPresetIndex, int subPresetSlot) const
+{
+    const int clampedMain = juce::jlimit(0, MaxPresetSlots - 1, mainPresetIndex);
+    const int clampedSub = juce::jlimit(0, SubPresetSlots - 1, subPresetSlot);
+    return MaxPresetSlots + (clampedMain * SubPresetSlots) + clampedSub;
+}
+
+bool StepVstHostAudioProcessor::saveSubPresetForMainPreset(int mainPresetIndex, int subPresetSlot)
+{
+    if (!audioEngine)
+        return false;
+
+    const int storageIndex = getSubPresetStoragePresetIndex(mainPresetIndex, subPresetSlot);
+    std::array<juce::File, MaxStrips> stripFiles{};
+    for (int i = 0; i < MaxStrips; ++i)
+        stripFiles[static_cast<size_t>(i)] = currentStripFiles[static_cast<size_t>(i)];
+
+    struct ScopedSuspendProcessing
+    {
+        explicit ScopedSuspendProcessing(StepVstHostAudioProcessor& p) : processor(p) { processor.suspendProcessing(true); }
+        ~ScopedSuspendProcessing() { processor.suspendProcessing(false); }
+        StepVstHostAudioProcessor& processor;
+    } scopedSuspend(*this);
+
+    return PresetStore::savePreset(storageIndex,
+                                   MaxStrips,
+                                   audioEngine.get(),
+                                   parameters,
+                                   stripFiles.data());
+}
+
+void StepVstHostAudioProcessor::ensureSubPresetsInitializedForMainPreset(int mainPresetIndex)
+{
+    // Intentionally do not auto-create sub-presets.
+    // Empty sub-slots must remain empty so recalling them resets to the
+    // flat/default sequencer state until the user explicitly saves a slot.
+    activeMainPresetIndex = juce::jlimit(0, MaxPresetSlots - 1, mainPresetIndex);
+}
+
+void StepVstHostAudioProcessor::requestSubPresetRecallQuantized(
+    int mainPresetIndex, int subPresetSlot, bool sequenceDriven)
+{
+    if (!audioEngine)
+        return;
+
+    const int clampedMain = juce::jlimit(0, MaxPresetSlots - 1, mainPresetIndex);
+    const int clampedSlot = juce::jlimit(0, SubPresetSlots - 1, subPresetSlot);
+    activeMainPresetIndex = clampedMain;
+
+    pendingSubPresetRecall.active = true;
+    pendingSubPresetRecall.sequenceDriven = sequenceDriven;
+    pendingSubPresetRecall.targetResolved = false;
+    pendingSubPresetRecall.mainPresetIndex = clampedMain;
+    pendingSubPresetRecall.subPresetSlot = clampedSlot;
+    pendingSubPresetRecall.targetPpq = 0.0;
+
+    if (!isTimerRunning())
+        startTimer(kGridRefreshMs);
+}
+
+void StepVstHostAudioProcessor::updateSubPresetQuantizedRecall(
+    const juce::AudioPlayHead::PositionInfo& posInfo, int numSamples)
+{
+    if (!pendingSubPresetRecall.active)
+        return;
+
+    if (pendingSubPresetRecall.sequenceDriven
+        && (!subPresetSequenceActive || subPresetSequenceSlots.size() < 2))
+    {
+        pendingSubPresetRecall.active = false;
+        pendingSubPresetRecall.targetResolved = false;
+        return;
+    }
+
+    if (pendingSubPresetApplySlot.load(std::memory_order_acquire) >= 0)
+        return;
+
+    const auto ppqOpt = posInfo.getPpqPosition();
+    const auto bpmOpt = posInfo.getBpm();
+    if (!ppqOpt.hasValue() || !bpmOpt.hasValue()
+        || !std::isfinite(*ppqOpt) || !std::isfinite(*bpmOpt)
+        || *bpmOpt <= 0.0 || currentSampleRate <= 1.0)
+    {
+        if (pendingSubPresetRecall.sequenceDriven)
+            return;
+
+        pendingSubPresetApplyMainPreset.store(
+            pendingSubPresetRecall.mainPresetIndex, std::memory_order_release);
+        pendingSubPresetApplySlot.store(
+            pendingSubPresetRecall.subPresetSlot, std::memory_order_release);
+        pendingSubPresetRecall.active = false;
+        pendingSubPresetRecall.targetResolved = false;
+        return;
+    }
+
+    const double currentPpq = *ppqOpt;
+    if (!pendingSubPresetRecall.targetResolved)
+    {
+        double nextBar = std::floor(currentPpq / 4.0) * 4.0 + 4.0;
+        if (nextBar <= currentPpq + 1.0e-9)
+            nextBar += 4.0;
+        pendingSubPresetRecall.targetPpq = nextBar;
+        pendingSubPresetRecall.targetResolved = true;
+    }
+
+    const double ppqPerSecond = *bpmOpt / 60.0;
+    const double ppqPerSample = ppqPerSecond / currentSampleRate;
+    const double blockEndPpq = currentPpq + (ppqPerSample * static_cast<double>(juce::jmax(1, numSamples)));
+    if (blockEndPpq + 1.0e-9 < pendingSubPresetRecall.targetPpq)
+        return;
+
+    pendingSubPresetApplyMainPreset.store(
+        pendingSubPresetRecall.mainPresetIndex, std::memory_order_release);
+    pendingSubPresetApplySlot.store(
+        pendingSubPresetRecall.subPresetSlot, std::memory_order_release);
+
+    if (pendingSubPresetRecall.sequenceDriven
+        && subPresetSequenceActive
+        && subPresetSequenceSlots.size() >= 2)
+    {
+        int nextSlot = subPresetSequenceSlots.front();
+        for (size_t i = 0; i < subPresetSequenceSlots.size(); ++i)
+        {
+            if (subPresetSequenceSlots[i] != pendingSubPresetRecall.subPresetSlot)
+                continue;
+            const size_t nextIndex = (i + 1u) % subPresetSequenceSlots.size();
+            nextSlot = subPresetSequenceSlots[nextIndex];
+            break;
+        }
+
+        pendingSubPresetRecall.subPresetSlot = juce::jlimit(0, SubPresetSlots - 1, nextSlot);
+        pendingSubPresetRecall.targetPpq += 4.0;
+        pendingSubPresetRecall.targetResolved = true;
+    }
+    else
+    {
+        pendingSubPresetRecall.active = false;
+        pendingSubPresetRecall.targetResolved = false;
+    }
+}
+
+void StepVstHostAudioProcessor::processPendingSubPresetApply()
+{
+    const int queuedSlot = pendingSubPresetApplySlot.exchange(-1, std::memory_order_acq_rel);
+    if (queuedSlot < 0)
+        return;
+
+    const int queuedMain =
+        pendingSubPresetApplyMainPreset.exchange(-1, std::memory_order_acq_rel);
+    const int clampedMain = juce::jlimit(0, MaxPresetSlots - 1, queuedMain);
+    const int clampedSlot = juce::jlimit(0, SubPresetSlots - 1, queuedSlot);
+    const int storageIndex = getSubPresetStoragePresetIndex(clampedMain, clampedSlot);
+
+    double hostPpqSnapshot = std::numeric_limits<double>::quiet_NaN();
+    double hostTempoSnapshot = std::numeric_limits<double>::quiet_NaN();
+    (void)getHostSyncSnapshot(hostPpqSnapshot, hostTempoSnapshot);
+    performPresetLoad(storageIndex, hostPpqSnapshot, hostTempoSnapshot);
+
+    loadedPresetIndex = clampedMain;
+    activeMainPresetIndex = clampedMain;
+    activeSubPresetSlot = clampedSlot;
+    presetRefreshToken.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void StepVstHostAudioProcessor::savePreset(int presetIndex)
 {
     if (!audioEngine || presetIndex < 0 || presetIndex >= MaxPresetSlots)
         return;
+
+    activeMainPresetIndex = presetIndex;
 
     if (!isTimerRunning())
         startTimer(kGridRefreshMs);
@@ -4904,10 +10134,14 @@ void MlrVSTAudioProcessor::savePreset(int presetIndex)
     presetRefreshToken.fetch_add(1, std::memory_order_acq_rel);
 }
 
-void MlrVSTAudioProcessor::loadPreset(int presetIndex)
+void StepVstHostAudioProcessor::loadPreset(int presetIndex)
 {
+    if (presetIndex < 0 || presetIndex >= MaxPresetSlots)
+        return;
+
     try
     {
+        activeMainPresetIndex = presetIndex;
         double hostPpqSnapshot = std::numeric_limits<double>::quiet_NaN();
         double hostTempoSnapshot = std::numeric_limits<double>::quiet_NaN();
         const bool hasHostSync = getHostSyncSnapshot(hostPpqSnapshot, hostTempoSnapshot);
@@ -4919,6 +10153,9 @@ void MlrVSTAudioProcessor::loadPreset(int presetIndex)
 
         pendingPresetLoadIndex.store(-1, std::memory_order_release);
         performPresetLoad(presetIndex, hostPpqSnapshot, hostTempoSnapshot);
+        loadedPresetIndex = PresetStore::presetExists(presetIndex) ? presetIndex : -1;
+        ensureSubPresetsInitializedForMainPreset(presetIndex);
+        activeSubPresetSlot = juce::jlimit(0, SubPresetSlots - 1, activeSubPresetSlot);
     }
     catch (const std::exception& e)
     {
@@ -4930,7 +10167,7 @@ void MlrVSTAudioProcessor::loadPreset(int presetIndex)
     }
 }
 
-bool MlrVSTAudioProcessor::deletePreset(int presetIndex)
+bool StepVstHostAudioProcessor::deletePreset(int presetIndex)
 {
     try
     {
@@ -4939,9 +10176,9 @@ bool MlrVSTAudioProcessor::deletePreset(int presetIndex)
         {
             struct ScopedSuspendProcessing
             {
-                explicit ScopedSuspendProcessing(MlrVSTAudioProcessor& p) : processor(p) { processor.suspendProcessing(true); }
+                explicit ScopedSuspendProcessing(StepVstHostAudioProcessor& p) : processor(p) { processor.suspendProcessing(true); }
                 ~ScopedSuspendProcessing() { processor.suspendProcessing(false); }
-                MlrVSTAudioProcessor& processor;
+                StepVstHostAudioProcessor& processor;
             } scopedSuspend(*this);
 
             // Deleting any preset slot should leave runtime in a clean state.
@@ -4959,12 +10196,12 @@ bool MlrVSTAudioProcessor::deletePreset(int presetIndex)
     }
 }
 
-juce::String MlrVSTAudioProcessor::getPresetName(int presetIndex) const
+juce::String StepVstHostAudioProcessor::getPresetName(int presetIndex) const
 {
     return PresetStore::getPresetName(presetIndex);
 }
 
-bool MlrVSTAudioProcessor::setPresetName(int presetIndex, const juce::String& name)
+bool StepVstHostAudioProcessor::setPresetName(int presetIndex, const juce::String& name)
 {
     try
     {
@@ -4979,7 +10216,7 @@ bool MlrVSTAudioProcessor::setPresetName(int presetIndex, const juce::String& na
     }
 }
 
-bool MlrVSTAudioProcessor::presetExists(int presetIndex) const
+bool StepVstHostAudioProcessor::presetExists(int presetIndex) const
 {
     try
     {
@@ -4995,37 +10232,37 @@ bool MlrVSTAudioProcessor::presetExists(int presetIndex) const
 // AudioProcessor Virtual Functions
 //==============================================================================
 
-const juce::String MlrVSTAudioProcessor::getName() const
+const juce::String StepVstHostAudioProcessor::getName() const
 {
     return JucePlugin_Name;
 }
 
-bool MlrVSTAudioProcessor::acceptsMidi() const
+bool StepVstHostAudioProcessor::acceptsMidi() const
 {
     return false;
 }
 
-bool MlrVSTAudioProcessor::producesMidi() const
+bool StepVstHostAudioProcessor::producesMidi() const
 {
     return false;
 }
 
-bool MlrVSTAudioProcessor::isMidiEffect() const
+bool StepVstHostAudioProcessor::isMidiEffect() const
 {
     return false;
 }
 
-double MlrVSTAudioProcessor::getTailLengthSeconds() const
+double StepVstHostAudioProcessor::getTailLengthSeconds() const
 {
     return 0.0;
 }
 
-int MlrVSTAudioProcessor::getNumPrograms()
+int StepVstHostAudioProcessor::getNumPrograms()
 {
     return 1;
 }
 
-int MlrVSTAudioProcessor::getCurrentProgram()
+int StepVstHostAudioProcessor::getCurrentProgram()
 {
     return 0;
 }
