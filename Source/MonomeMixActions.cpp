@@ -9,39 +9,31 @@ namespace MonomeMixActions
 {
 namespace
 {
-constexpr int speedMode = static_cast<int>(MlrVSTAudioProcessor::ControlMode::Speed);
-constexpr int pitchMode = static_cast<int>(MlrVSTAudioProcessor::ControlMode::Pitch);
-constexpr int panMode = static_cast<int>(MlrVSTAudioProcessor::ControlMode::Pan);
-constexpr int volumeMode = static_cast<int>(MlrVSTAudioProcessor::ControlMode::Volume);
-constexpr int grainSizeMode = static_cast<int>(MlrVSTAudioProcessor::ControlMode::GrainSize);
-constexpr int swingMode = static_cast<int>(MlrVSTAudioProcessor::ControlMode::Swing);
-constexpr int gateMode = static_cast<int>(MlrVSTAudioProcessor::ControlMode::Gate);
+constexpr int speedMode = static_cast<int>(StepVstHostAudioProcessor::ControlMode::Speed);
+constexpr int pitchMode = static_cast<int>(StepVstHostAudioProcessor::ControlMode::Pitch);
+constexpr int panMode = static_cast<int>(StepVstHostAudioProcessor::ControlMode::Pan);
+constexpr int volumeMode = static_cast<int>(StepVstHostAudioProcessor::ControlMode::Volume);
+constexpr int lengthMode = static_cast<int>(StepVstHostAudioProcessor::ControlMode::Length);
+constexpr int swingMode = static_cast<int>(StepVstHostAudioProcessor::ControlMode::Swing);
+constexpr int gateMode = static_cast<int>(StepVstHostAudioProcessor::ControlMode::Gate);
 constexpr float minSliceLength = 0.02f;
 constexpr float maxSliceLength = 1.0f;
 constexpr float minStepDecayMs = 1.0f;
 constexpr float maxStepDecayMs = 4000.0f;
 constexpr float stepDecayMidpointMs = 700.0f;
+constexpr std::array<int, 16> kStepLengthStepsByColumn {
+    2, 3, 4, 5, 6, 8, 10, 12,
+    16, 20, 24, 32, 40, 48, 56, 64
+};
 
 const std::array<int, 16> musicalPitchSemitones = {
     -24, -21, -18, -15, -12, -9, -6, -3,
       0,   3,   6,   9,  12, 15, 18, 24
 };
 
-float grainSizeFromColumn(int x)
-{
-    const float t = juce::jlimit(0.0f, 1.0f, static_cast<float>(x) / 15.0f);
-    return 5.0f + (t * (2400.0f - 5.0f));
-}
-
 float unitFromColumn(int x)
 {
     return juce::jlimit(0.0f, 1.0f, static_cast<float>(x) / 15.0f);
-}
-
-float bipolarFromColumn(int x, float minValue, float maxValue)
-{
-    const float t = unitFromColumn(x);
-    return minValue + (t * (maxValue - minValue));
 }
 
 const juce::NormalisableRange<float>& sliceLengthRange()
@@ -115,26 +107,41 @@ int findNearestPitchColumn(int semitones)
     return best;
 }
 
-int findNearestGrainSizeColumn(float sizeMs)
+int stepLengthStepsFromColumn(int x)
 {
-    int best = 0;
-    float bestDiff = std::abs(sizeMs - grainSizeFromColumn(0));
+    return kStepLengthStepsByColumn[static_cast<size_t>(juce::jlimit(0, 15, x))];
+}
 
+int findNearestStepLengthColumn(int steps)
+{
+    int bestCol = 0;
+    int bestDistance = std::abs(steps - kStepLengthStepsByColumn[0]);
     for (int i = 1; i < 16; ++i)
     {
-        const float diff = std::abs(sizeMs - grainSizeFromColumn(i));
-        if (diff < bestDiff)
+        const int dist = std::abs(steps - kStepLengthStepsByColumn[static_cast<size_t>(i)]);
+        if (dist < bestDistance)
         {
-            bestDiff = diff;
-            best = i;
+            bestDistance = dist;
+            bestCol = i;
         }
     }
+    return bestCol;
+}
 
-    return best;
+float getStripParameterValue(const StepVstHostAudioProcessor& processor,
+                             int stripIndex,
+                             const juce::String& prefix,
+                             float fallback)
+{
+    if (stripIndex < 0 || stripIndex >= StepVstHostAudioProcessor::MaxStrips)
+        return fallback;
+    if (auto* raw = processor.parameters.getRawParameterValue(prefix + juce::String(stripIndex)))
+        return raw->load();
+    return fallback;
 }
 }
 
-void handleButtonPress(MlrVSTAudioProcessor& processor,
+void handleButtonPress(StepVstHostAudioProcessor& processor,
                        EnhancedAudioStrip& strip,
                        int stripIndex,
                        int x,
@@ -187,9 +194,10 @@ void handleButtonPress(MlrVSTAudioProcessor& processor,
         if (auto* param = processor.parameters.getParameter("stripVolume" + juce::String(stripIndex)))
             param->setValueNotifyingHost(vol);
     }
-    else if (mode == grainSizeMode)
+    else if (mode == lengthMode)
     {
-        strip.setGrainSizeMs(grainSizeFromColumn(juce::jlimit(0, 15, x)));
+        const int steps = stepLengthStepsFromColumn(x);
+        strip.setStepPatternLengthSteps(steps);
     }
     else if (mode == swingMode)
     {
@@ -213,7 +221,8 @@ void handleButtonPress(MlrVSTAudioProcessor& processor,
 }
 
 void renderRow(const EnhancedAudioStrip& strip,
-               const MlrVSTAudioProcessor& processor,
+               const StepVstHostAudioProcessor& processor,
+               int stripIndex,
                int y,
                int newLedState[16][16],
                int mode)
@@ -238,7 +247,9 @@ void renderRow(const EnhancedAudioStrip& strip,
     }
     else if (mode == pitchMode)
     {
-        const int semitones = static_cast<int>(std::round(processor.getPitchSemitonesForDisplay(strip)));
+        const float semitonesValue = getStripParameterValue(
+            processor, stripIndex, "stripPitch", processor.getPitchSemitonesForDisplay(strip));
+        const int semitones = static_cast<int>(std::round(semitonesValue));
 
         const int activeCol = findNearestPitchColumn(semitones);
 
@@ -253,11 +264,8 @@ void renderRow(const EnhancedAudioStrip& strip,
     }
     else if (mode == panMode)
     {
-        float pan = 0.0f;
-        if (isStepMode && stepSampler)
-            pan = stepSampler->getPan();
-        else
-            pan = strip.getPan();
+        const float fallbackPan = (isStepMode && stepSampler) ? stepSampler->getPan() : strip.getPan();
+        const float pan = getStripParameterValue(processor, stripIndex, "stripPan", fallbackPan);
 
         int panX = 8 + static_cast<int>(pan * 8.0f);
         panX = juce::jlimit(0, 15, panX);
@@ -274,27 +282,41 @@ void renderRow(const EnhancedAudioStrip& strip,
     }
     else if (mode == volumeMode)
     {
-        float vol = 0.0f;
-        if (isStepMode && stepSampler)
-            vol = stepSampler->getVolume();
-        else
-            vol = strip.getVolume();
+        const float fallbackVol = (isStepMode && stepSampler) ? stepSampler->getVolume() : strip.getVolume();
+        const float vol = getStripParameterValue(processor, stripIndex, "stripVolume", fallbackVol);
 
         int numLit = static_cast<int>(vol * 16.0f);
         for (int x = 0; x < 16; ++x)
             newLedState[x][y] = (x < numLit) ? 12 : 2;
     }
-    else if (mode == grainSizeMode)
+    else if (mode == lengthMode)
     {
-        const int activeCol = findNearestGrainSizeColumn(strip.getGrainSizeMs());
-        for (int x = 0; x < 16; ++x)
+        if (isStepMode)
         {
-            if (x == activeCol)
-                newLedState[x][y] = 15;
-            else if (x <= activeCol)
-                newLedState[x][y] = 8;
-            else
-                newLedState[x][y] = 2;
+            const int activeCol = findNearestStepLengthColumn(strip.getStepPatternLengthSteps());
+            for (int x = 0; x < 16; ++x)
+            {
+                if (x == activeCol)
+                    newLedState[x][y] = 15;
+                else if (x <= activeCol)
+                    newLedState[x][y] = 8;
+                else
+                    newLedState[x][y] = 2;
+            }
+        }
+        else
+        {
+            const int loopStart = juce::jlimit(0, 15, strip.getLoopStart());
+            const int loopEnd = juce::jlimit(loopStart + 1, 16, strip.getLoopEnd());
+            for (int x = 0; x < 16; ++x)
+            {
+                if (x >= loopStart && x < loopEnd)
+                    newLedState[x][y] = 10;
+                else
+                    newLedState[x][y] = 2;
+            }
+            newLedState[loopStart][y] = 15;
+            newLedState[juce::jmax(loopStart, loopEnd - 1)][y] = 13;
         }
     }
     else if (mode == swingMode)
@@ -313,46 +335,4 @@ void renderRow(const EnhancedAudioStrip& strip,
     }
 }
 
-void handleGrainPageButtonPress(EnhancedAudioStrip& targetStrip, int controlRow, int x)
-{
-    const int cx = juce::jlimit(0, 15, x);
-    switch (juce::jlimit(0, 5, controlRow))
-    {
-        case 0: targetStrip.setGrainSizeMs(grainSizeFromColumn(cx)); break;
-        case 1: targetStrip.setGrainDensity(bipolarFromColumn(cx, 0.05f, 0.9f)); break;
-        case 2: targetStrip.setGrainPitch(bipolarFromColumn(cx, -24.0f, 24.0f)); break;
-        case 3: targetStrip.setGrainJitter(unitFromColumn(cx)); break;      // SJTR
-        case 4: targetStrip.setGrainRandomDepth(unitFromColumn(cx)); break; // RAND
-        case 5: targetStrip.setGrainEnvelope(unitFromColumn(cx)); break;    // ENV
-        default: break;
-    }
-}
-
-void renderGrainPageRow(const EnhancedAudioStrip& targetStrip, int controlRow, int y, int newLedState[16][16])
-{
-    int activeCol = 0;
-    switch (juce::jlimit(0, 5, controlRow))
-    {
-        case 0: activeCol = findNearestGrainSizeColumn(targetStrip.getGrainSizeMs()); break;
-        case 1: activeCol = findNearestColumn(targetStrip.getGrainDensity(), 0.05f, 0.9f); break;
-        case 2: activeCol = findNearestColumn(targetStrip.getGrainPitch(), -24.0f, 24.0f); break;
-        case 3: activeCol = findNearestColumn(targetStrip.getGrainJitter(), 0.0f, 1.0f); break;
-        case 4: activeCol = findNearestColumn(targetStrip.getGrainRandomDepth(), 0.0f, 1.0f); break;
-        case 5: activeCol = findNearestColumn(targetStrip.getGrainEnvelope(), 0.0f, 1.0f); break;
-        default: break;
-    }
-
-    for (int x = 0; x < 16; ++x)
-    {
-        if (x == activeCol)
-            newLedState[x][y] = 15;
-        else if (x <= activeCol)
-            newLedState[x][y] = 7;
-        else
-            newLedState[x][y] = 2;
-    }
-
-    if (controlRow == 2)
-        newLedState[8][y] = juce::jmax(newLedState[8][y], 9);
-}
 } // namespace MonomeMixActions

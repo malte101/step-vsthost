@@ -1,28 +1,20 @@
 #pragma once
 
 class EnhancedAudioStrip;
-class MlrVSTAudioProcessor;
+class StepVstHostAudioProcessor;
 
 namespace MonomeMixActions
 {
-void handleButtonPress(MlrVSTAudioProcessor& processor,
+void handleButtonPress(StepVstHostAudioProcessor& processor,
                        EnhancedAudioStrip& strip,
                        int stripIndex,
                        int x,
                        int mode);
 
 void renderRow(const EnhancedAudioStrip& strip,
-               const MlrVSTAudioProcessor& processor,
+               const StepVstHostAudioProcessor& processor,
+               int stripIndex,
                int y,
                int newLedState[16][16],
                int mode);
-
-void handleGrainPageButtonPress(EnhancedAudioStrip& targetStrip,
-                                int controlRow,
-                                int x);
-
-void renderGrainPageRow(const EnhancedAudioStrip& targetStrip,
-                        int controlRow,
-                        int y,
-                        int newLedState[16][16]);
 } // namespace MonomeMixActions

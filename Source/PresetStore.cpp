@@ -6,7 +6,10 @@
 
 namespace PresetStore
 {
-static constexpr int kMaxPresetSlots = 16 * 7;
+static constexpr int kVisiblePresetSlots = 16 * 7;
+static constexpr int kSubPresetSlotsPerMainPreset = 4;
+static constexpr int kMaxPresetSlots =
+    kVisiblePresetSlots + (kVisiblePresetSlots * kSubPresetSlotsPerMainPreset);
 
 namespace
 {
@@ -45,7 +48,7 @@ std::unique_ptr<juce::XmlElement> parsePresetXmlSafely(const juce::File& presetF
         return nullptr;
 
     auto xml = juce::XmlDocument::parse(presetFile);
-    if (xml == nullptr || !xml->hasTagName("mlrVSTPreset"))
+    if (xml == nullptr || !xml->hasTagName("stepVstHostPreset"))
         return nullptr;
 
     return xml;
@@ -402,7 +405,7 @@ void decodeFloatArrayCsv(const juce::String& csvText, std::array<float, N>& outV
 
 bool writeDefaultPresetFile(const juce::File& presetFile, int presetIndex)
 {
-    juce::XmlElement preset("mlrVSTPreset");
+    juce::XmlElement preset("stepVstHostPreset");
     preset.setAttribute("version", "1.0");
     preset.setAttribute("index", presetIndex);
     if (presetFile.existsAsFile())
@@ -496,8 +499,8 @@ juce::File getPresetDirectory()
         .getChildFile("Library")
         .getChildFile("Audio")
         .getChildFile("Presets")
-        .getChildFile("mlrVST")
-        .getChildFile("mlrVST");
+        .getChildFile("step-vsthost")
+        .getChildFile("step-vsthost");
     if (!dir.exists())
         dir.createDirectory();
     return dir;
@@ -520,7 +523,7 @@ bool savePreset(int presetIndex,
 
         auto presetFile = presetDir.getChildFile("Preset_" + juce::String(presetIndex + 1) + ".mlrpreset");
 
-        juce::XmlElement preset("mlrVSTPreset");
+        juce::XmlElement preset("stepVstHostPreset");
         preset.setAttribute("version", "1.0");
         preset.setAttribute("index", presetIndex);
         if (presetFile.existsAsFile())
@@ -936,7 +939,10 @@ bool loadPreset(int presetIndex,
         }
         else
         {
-            strip->stop(true);
+            if (restorePlaying)
+                strip->startStepSequencer();
+            else
+                strip->stop(true);
         }
 
         float beats = finiteFloat(stripXml->getDoubleAttribute("beatsPerLoop", -1.0), -1.0f);

@@ -9,8 +9,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 $bundleCandidates = @(
-    (Join-Path $BuildDir "mlrVST_artefacts/$Config/VST3/mlrVST.vst3"),
-    (Join-Path $BuildDir "mlrVST_artefacts/VST3/mlrVST.vst3")
+    (Join-Path $BuildDir "step_vsthost_artefacts/$Config/VST3/step-vsthost.vst3"),
+    (Join-Path $BuildDir "step_vsthost_artefacts/VST3/step-vsthost.vst3")
 )
 
 $bundle = $bundleCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
@@ -30,11 +30,11 @@ if ([string]::IsNullOrWhiteSpace($Commit)) {
 
 $shortSha = if ($Commit.Length -ge 7) { $Commit.Substring(0, 7) } else { $Commit }
 $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss")
-$packageName = "mlrVST-windows-x64-vst3-$timestamp-$shortSha"
+$packageName = "step-vsthost-windows-x64-vst3-$timestamp-$shortSha"
 
 New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 
-$stageRoot = Join-Path $env:TEMP ("mlrvst-release-" + $timestamp + "-" + $shortSha)
+$stageRoot = Join-Path $env:TEMP ("step-vsthost-release-" + $timestamp + "-" + $shortSha)
 $packageDir = Join-Path $stageRoot $packageName
 
 if (Test-Path $stageRoot) {
@@ -42,7 +42,7 @@ if (Test-Path $stageRoot) {
 }
 New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
 
-Copy-Item -Recurse -Path $bundle -Destination (Join-Path $packageDir "mlrVST.vst3")
+Copy-Item -Recurse -Path $bundle -Destination (Join-Path $packageDir "step-vsthost.vst3")
 
 foreach ($noticeFile in @("LICENSE", "THIRD_PARTY_NOTICES.md", "README.md")) {
     if (Test-Path $noticeFile) {
@@ -53,7 +53,7 @@ foreach ($noticeFile in @("LICENSE", "THIRD_PARTY_NOTICES.md", "README.md")) {
 $workflowField = if ([string]::IsNullOrWhiteSpace($WorkflowRunUrl)) { "n/a" } else { $WorkflowRunUrl }
 
 @"
-Product: mlrVST
+Product: step-vsthost
 Platform: Windows x64
 Format: VST3
 Commit: $Commit

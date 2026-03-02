@@ -11,6 +11,7 @@
 #include "PluginEditor.h"
 #include "PlayheadSpeedQuantizer.h"
 #include <cmath>
+#include <limits>
 #include <juce_audio_formats/juce_audio_formats.h>
 
 namespace
@@ -26,6 +27,36 @@ const auto kTextPrimary = juce::Colour(0xff233347);
 const auto kTextSecondary = juce::Colour(0xff4f6278);
 const auto kTextMuted = juce::Colour(0xff78879a);
 const auto kSurfaceDark = juce::Colour(0xffd7e0ea);
+
+constexpr int kBeatSpaceCategoryCount = StepVstHostAudioProcessor::BeatSpaceChannels;
+constexpr int kBeatSpaceActionNavCoarse = 101;
+constexpr int kBeatSpaceActionNavFine = 102;
+constexpr int kBeatSpaceActionZoneLock0 = 120;
+constexpr int kBeatSpaceActionZoneLock25 = 121;
+constexpr int kBeatSpaceActionZoneLock50 = 122;
+constexpr int kBeatSpaceActionZoneLock75 = 123;
+constexpr int kBeatSpaceActionZoneLock100 = 124;
+constexpr int kBeatSpaceActionRandomZone = 140;
+constexpr int kBeatSpaceActionRandomNear = 141;
+constexpr int kBeatSpaceActionRandomCharacter = 142;
+constexpr int kBeatSpaceActionRandomFull = 143;
+constexpr int kBeatSpaceActionNearest8 = 150;
+constexpr int kBeatSpaceActionPathAdd = 160;
+constexpr int kBeatSpaceActionPathStartQuarter = 161;
+constexpr int kBeatSpaceActionPathStartBar = 162;
+constexpr int kBeatSpaceActionPathStop = 163;
+constexpr int kBeatSpaceActionPathClear = 164;
+constexpr int kBeatSpaceActionBookmarkAdd = 180;
+constexpr int kBeatSpaceActionBookmarkClear = 181;
+constexpr int kBeatSpaceActionBookmarkRecallBase = 200;
+constexpr int kBeatSpaceBookmarkSlots = 8;
+constexpr int kBeatSpaceMenuSlotBase = 1000;
+constexpr int kBeatSpaceMenuNearestBase = 2000;
+constexpr int kBeatSpaceMenuManageRenameBase = 3000;
+constexpr int kBeatSpaceMenuManageMoveUpBase = 4000;
+constexpr int kBeatSpaceMenuManageMoveDownBase = 5000;
+constexpr int kBeatSpaceMenuManageDeleteBase = 6000;
+constexpr int kBeatSpaceMenuManageReset = 7001;
 
 void drawPanel(juce::Graphics& g, juce::Rectangle<float> bounds, juce::Colour accent, float radius = 8.0f)
 {
@@ -126,46 +157,48 @@ float getPlayheadSpeedRatioForStrip(const EnhancedAudioStrip& strip)
     return PlayheadSpeedQuantizer::quantizeRatio(strip.getPlayheadSpeedRatio());
 }
 
-juce::String getMonomePageDisplayName(MlrVSTAudioProcessor::ControlMode mode)
+juce::String getMonomePageDisplayName(StepVstHostAudioProcessor::ControlMode mode)
 {
     switch (mode)
     {
-        case MlrVSTAudioProcessor::ControlMode::Normal: return "Normal";
-        case MlrVSTAudioProcessor::ControlMode::Speed: return "Speed";
-        case MlrVSTAudioProcessor::ControlMode::Pitch: return "Pitch";
-        case MlrVSTAudioProcessor::ControlMode::Pan: return "Pan";
-        case MlrVSTAudioProcessor::ControlMode::Volume: return "Volume";
-        case MlrVSTAudioProcessor::ControlMode::GrainSize: return "Grain Size";
-        case MlrVSTAudioProcessor::ControlMode::Filter: return "Filter";
-        case MlrVSTAudioProcessor::ControlMode::Swing: return "Swing";
-        case MlrVSTAudioProcessor::ControlMode::Gate: return "Gate";
-        case MlrVSTAudioProcessor::ControlMode::Modulation: return "Modulation";
-        case MlrVSTAudioProcessor::ControlMode::Preset: return "Preset Loader";
-        case MlrVSTAudioProcessor::ControlMode::StepEdit: return "Step Edit";
-        case MlrVSTAudioProcessor::ControlMode::GroupAssign: return "Group Assign";
-        case MlrVSTAudioProcessor::ControlMode::FileBrowser: return "File Browser";
+        case StepVstHostAudioProcessor::ControlMode::Normal: return "Normal";
+        case StepVstHostAudioProcessor::ControlMode::Speed: return "Speed";
+        case StepVstHostAudioProcessor::ControlMode::Pitch: return "Pitch";
+        case StepVstHostAudioProcessor::ControlMode::Pan: return "Pan";
+        case StepVstHostAudioProcessor::ControlMode::Volume: return "Volume";
+        case StepVstHostAudioProcessor::ControlMode::Length: return "Length";
+        case StepVstHostAudioProcessor::ControlMode::Filter: return "Filter";
+        case StepVstHostAudioProcessor::ControlMode::Swing: return "Swing";
+        case StepVstHostAudioProcessor::ControlMode::Gate: return "Gate";
+        case StepVstHostAudioProcessor::ControlMode::Modulation: return "Modulation";
+        case StepVstHostAudioProcessor::ControlMode::BeatSpace: return "BeatSpace";
+        case StepVstHostAudioProcessor::ControlMode::Preset: return "Preset Loader";
+        case StepVstHostAudioProcessor::ControlMode::StepEdit: return "Step Edit";
+        case StepVstHostAudioProcessor::ControlMode::GroupAssign: return "Group Assign";
+        case StepVstHostAudioProcessor::ControlMode::FileBrowser: return "File Browser";
     }
     return "Normal";
 }
 
-juce::String getMonomePageShortName(MlrVSTAudioProcessor::ControlMode mode)
+juce::String getMonomePageShortName(StepVstHostAudioProcessor::ControlMode mode)
 {
     switch (mode)
     {
-        case MlrVSTAudioProcessor::ControlMode::Speed: return "SPD";
-        case MlrVSTAudioProcessor::ControlMode::Pitch: return "PIT";
-        case MlrVSTAudioProcessor::ControlMode::Pan: return "PAN";
-        case MlrVSTAudioProcessor::ControlMode::Volume: return "VOL";
-        case MlrVSTAudioProcessor::ControlMode::GrainSize: return "GRN";
-        case MlrVSTAudioProcessor::ControlMode::Filter: return "FLT";
-        case MlrVSTAudioProcessor::ControlMode::Swing: return "SWG";
-        case MlrVSTAudioProcessor::ControlMode::Gate: return "GATE";
-        case MlrVSTAudioProcessor::ControlMode::FileBrowser: return "BRW";
-        case MlrVSTAudioProcessor::ControlMode::GroupAssign: return "GRP";
-        case MlrVSTAudioProcessor::ControlMode::Modulation: return "MOD";
-        case MlrVSTAudioProcessor::ControlMode::Preset: return "PST";
-        case MlrVSTAudioProcessor::ControlMode::StepEdit: return "STEP";
-        case MlrVSTAudioProcessor::ControlMode::Normal:
+        case StepVstHostAudioProcessor::ControlMode::Speed: return "SPD";
+        case StepVstHostAudioProcessor::ControlMode::Pitch: return "PIT";
+        case StepVstHostAudioProcessor::ControlMode::Pan: return "PAN";
+        case StepVstHostAudioProcessor::ControlMode::Volume: return "VOL";
+        case StepVstHostAudioProcessor::ControlMode::Length: return "LEN";
+        case StepVstHostAudioProcessor::ControlMode::Filter: return "FLT";
+        case StepVstHostAudioProcessor::ControlMode::Swing: return "SWG";
+        case StepVstHostAudioProcessor::ControlMode::Gate: return "GATE";
+        case StepVstHostAudioProcessor::ControlMode::FileBrowser: return "BRW";
+        case StepVstHostAudioProcessor::ControlMode::GroupAssign: return "GRP";
+        case StepVstHostAudioProcessor::ControlMode::Modulation: return "MOD";
+        case StepVstHostAudioProcessor::ControlMode::BeatSpace: return "BSP";
+        case StepVstHostAudioProcessor::ControlMode::Preset: return "PST";
+        case StepVstHostAudioProcessor::ControlMode::StepEdit: return "STEP";
+        case StepVstHostAudioProcessor::ControlMode::Normal:
         default: return "NORM";
     }
 }
@@ -878,7 +911,7 @@ void LevelMeter::setPeak(float peak)
 // StripControl - Compact horizontal layout with LED overlay
 //==============================================================================
 
-StripControl::StripControl(int idx, MlrVSTAudioProcessor& p)
+StripControl::StripControl(int idx, StepVstHostAudioProcessor& p)
     : stripIndex(idx), processor(p), waveform()
 {
     setupComponents();
@@ -957,32 +990,75 @@ void StripControl::setupComponents()
     // Load button - compact
     loadButton.setButtonText("Load");
     loadButton.onClick = [this]() { loadSample(); };
-    loadButton.setTooltip("Load sample into this strip.");
+    loadButton.setTooltip("Open BeatSpace preset picker for this lane category (lanes 1-6).");
+    styleUiButton(loadButton);
     addAndMakeVisible(loadButton);
 
-    // Play mode selector (step-only build)
-    constexpr int kStepModeComboId = static_cast<int>(EnhancedAudioStrip::PlayMode::Step) + 1;
-    playModeBox.addItem("Step", kStepModeComboId);
-    playModeBox.setJustificationType(juce::Justification::centredLeft);
-    playModeBox.setSelectedId(kStepModeComboId);
-    playModeBox.setEnabled(false);
-    playModeBox.setTooltip("Step mode is fixed in this build.");
-    playModeBox.onChange = [this]()
+    muteButton.setButtonText("Mute");
+    muteButton.setClickingTogglesState(true);
+    muteButton.setTooltip("Mute this strip.");
+    muteButton.onClick = [this]()
     {
-        if (!processor.getAudioEngine()) return;
-        if (auto* strip = processor.getAudioEngine()->getStrip(stripIndex))
-        {
-            strip->setPlayMode(EnhancedAudioStrip::PlayMode::Step);
-            showingStepDisplay = true;
-            waveform.setVisible(false);
-            stepDisplay.setVisible(true);
-            patternLengthBox.setVisible(true);
-            updateGrainOverlayVisibility();
-            resized();  // Re-layout components
-        }
+        if (auto* engine = processor.getAudioEngine())
+            if (auto* strip = engine->getStrip(stripIndex))
+                strip->setMuted(muteButton.getToggleState());
     };
-    addAndMakeVisible(playModeBox);
-    
+    styleUiButton(muteButton);
+    muteButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xfff7e2e0));
+    muteButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffd75749));
+    muteButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff7d2d26));
+    muteButton.setColour(juce::TextButton::textColourOnId, juce::Colour(0xfff9fdff));
+    addAndMakeVisible(muteButton);
+
+    soloButton.setButtonText("Solo");
+    soloButton.setClickingTogglesState(true);
+    soloButton.setTooltip("Solo this strip.");
+    soloButton.onClick = [this]()
+    {
+        if (auto* engine = processor.getAudioEngine())
+            if (auto* strip = engine->getStrip(stripIndex))
+                strip->setSolo(soloButton.getToggleState());
+    };
+    styleUiButton(soloButton);
+    soloButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xfff6ecd6));
+    soloButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffc28f2d));
+    soloButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff664b19));
+    soloButton.setColour(juce::TextButton::textColourOnId, juce::Colour(0xfff9fdff));
+    addAndMakeVisible(soloButton);
+
+    beatSpaceCategoryLabel.setText("CAT", juce::dontSendNotification);
+    beatSpaceCategoryLabel.setFont(juce::Font(juce::FontOptions(8.0f, juce::Font::bold)));
+    beatSpaceCategoryLabel.setJustificationType(juce::Justification::centredLeft);
+    beatSpaceCategoryLabel.setColour(juce::Label::textColourId, kTextMuted);
+    addAndMakeVisible(beatSpaceCategoryLabel);
+
+    rebuildBeatSpaceCategoryMenu();
+    beatSpaceCategoryBox.setTooltip("BeatSpace category + workflow actions for this strip.");
+    beatSpaceCategoryBox.onChange = [this]()
+    {
+        if (suppressBeatSpaceCategoryAction)
+            return;
+        if (stripIndex < 0 || stripIndex >= StepVstHostAudioProcessor::BeatSpaceChannels)
+            return;
+        const int selected = beatSpaceCategoryBox.getSelectedId();
+        if (selected <= 0)
+            return;
+        if (selected <= kBeatSpaceCategoryCount)
+        {
+            processor.setBeatSpaceChannelSpaceAssignment(stripIndex, selected - 1);
+            return;
+        }
+
+        handleBeatSpaceCategoryAction(selected);
+        suppressBeatSpaceCategoryAction = true;
+        beatSpaceCategoryBox.setSelectedId(
+            processor.getBeatSpaceChannelSpaceAssignment(stripIndex) + 1,
+            juce::dontSendNotification);
+        suppressBeatSpaceCategoryAction = false;
+    };
+    styleUiCombo(beatSpaceCategoryBox);
+    addAndMakeVisible(beatSpaceCategoryBox);
+
     // Direction mode selector - NEW!
     directionModeBox.addItem("Normal", 1);
     directionModeBox.addItem("Reverse", 2);
@@ -1005,7 +1081,6 @@ void StripControl::setupComponents()
         }
     };
     addAndMakeVisible(directionModeBox);
-    addAndMakeVisible(playModeBox);
     
     // Compact rotary controls with colored look
     volumeSlider.setLookAndFeel(&knobLookAndFeel);
@@ -1049,7 +1124,7 @@ void StripControl::setupComponents()
     speedSlider.setLookAndFeel(&knobLookAndFeel);
     speedSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     speedSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-    speedSlider.setRange(0.0, 4.0, 0.001);
+    speedSlider.setRange(0.0, 8.0, 0.001);
     speedSlider.setValue(1.0);
     enableAltClickReset(speedSlider, 1.0);
     speedSlider.textFromValueFunction = [](double value)
@@ -1401,14 +1476,14 @@ void StripControl::setupComponents()
     patternLengthBox.onChange = [this]()
     {
         const int bars = juce::jmax(1, patternLengthBox.getSelectedId());
-        const int steps = juce::jlimit(1, 64, bars * 16);
+        const int steps = juce::jlimit(2, 64, bars * 16);
         if (auto* strip = processor.getAudioEngine()->getStrip(stripIndex))
             strip->setStepPatternBars(bars);
         stepLengthReadoutBox.setValue(steps, juce::dontSendNotification);
     };
     addAndMakeVisible(patternLengthBox);
 
-    stepLengthReadoutBox.setRange(1, 64);
+    stepLengthReadoutBox.setRange(2, 64);
     stepLengthReadoutBox.setEditable(false, true, false);
     stepLengthReadoutBox.setJustificationType(juce::Justification::centred);
     stepLengthReadoutBox.setInterceptsMouseClicks(true, false);
@@ -1416,11 +1491,11 @@ void StripControl::setupComponents()
     stepLengthReadoutBox.setColour(juce::Label::textColourId, kTextPrimary);
     stepLengthReadoutBox.setColour(juce::Label::outlineColourId, juce::Colour(0xffb7c5d5));
     stepLengthReadoutBox.setColour(juce::TextEditor::focusedOutlineColourId, stripColor.withAlpha(0.9f));
-    stepLengthReadoutBox.setTooltip("Step pattern length (1..64). Drag or double-click to type.");
+    stepLengthReadoutBox.setTooltip("Step pattern length (2..64). Drag or double-click to type.");
     stepLengthReadoutBox.setValue(16, juce::dontSendNotification);
     stepLengthReadoutBox.onValueChange = [this](int steps)
     {
-        const int clampedSteps = juce::jlimit(1, 64, steps);
+        const int clampedSteps = juce::jlimit(2, 64, steps);
         if (auto* strip = processor.getAudioEngine()->getStrip(stripIndex))
             strip->setStepPatternLengthSteps(clampedSteps);
 
@@ -1505,21 +1580,12 @@ void StripControl::setupComponents()
     stepAttackSlider.setTooltip("Step envelope attack");
     stepDecaySlider.setTooltip("Step envelope decay");
     stepReleaseSlider.setTooltip("Step envelope release");
-    stepAttackSlider.onValueChange = [this]()
-    {
-        if (auto* strip = processor.getAudioEngine()->getStrip(stripIndex))
-            strip->setStepEnvelopeAttackMs(static_cast<float>(stepAttackSlider.getValue()));
-    };
-    stepDecaySlider.onValueChange = [this]()
-    {
-        if (auto* strip = processor.getAudioEngine()->getStrip(stripIndex))
-            strip->setStepEnvelopeDecayMs(static_cast<float>(stepDecaySlider.getValue()));
-    };
-    stepReleaseSlider.onValueChange = [this]()
-    {
-        if (auto* strip = processor.getAudioEngine()->getStrip(stripIndex))
-            strip->setStepEnvelopeReleaseMs(static_cast<float>(stepReleaseSlider.getValue()));
-    };
+    stepAttackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        processor.parameters, "stripStepAttack" + juce::String(stripIndex), stepAttackSlider);
+    stepDecayAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        processor.parameters, "stripStepDecay" + juce::String(stripIndex), stepDecaySlider);
+    stepReleaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        processor.parameters, "stripStepRelease" + juce::String(stripIndex), stepReleaseSlider);
     
     // Labels below knobs
     volumeLabel.setText("VOL", juce::dontSendNotification);
@@ -1565,21 +1631,6 @@ void StripControl::setupComponents()
     tempoLabel.setColour(juce::Label::textColourId, stripColor);
     addAndMakeVisible(tempoLabel);
     tempoLabel.setTooltip("Beats per loop (auto or manual).");
-
-    recordBarsBox.addItem("1/4", 25);
-    recordBarsBox.addItem("1/2", 50);
-    recordBarsBox.addItem("1", 100);
-    recordBarsBox.addItem("2", 200);
-    recordBarsBox.addItem("4", 400);
-    recordBarsBox.addItem("8", 800);
-    recordBarsBox.setJustificationType(juce::Justification::centredLeft);
-    recordBarsBox.setSelectedId(100, juce::dontSendNotification);
-    recordBarsBox.setTooltip("Loop bars per strip.");
-    recordBarsBox.onChange = [this]()
-    {
-        processor.requestBarLengthChange(stripIndex, recordBarsBox.getSelectedId());
-    };
-    addAndMakeVisible(recordBarsBox);
 
     modTargetLabel.setText("TARGET", juce::dontSendNotification);
     modTargetLabel.setFont(juce::Font(juce::FontOptions(8.0f, juce::Font::bold)));
@@ -1807,6 +1858,8 @@ void StripControl::updateGrainOverlayVisibility()
     stepAttackLabel.setVisible(isStepMode && !isGrainMode);
     stepDecayLabel.setVisible(isStepMode && !isGrainMode);
     stepReleaseLabel.setVisible(isStepMode && !isGrainMode);
+    beatSpaceCategoryLabel.setVisible(!isGrainMode && stripIndex < StepVstHostAudioProcessor::BeatSpaceChannels);
+    beatSpaceCategoryBox.setVisible(!isGrainMode && stripIndex < StepVstHostAudioProcessor::BeatSpaceChannels);
     grainSizeSlider.setVisible(isGrainMode);
     grainDensitySlider.setVisible(isGrainMode);
     grainPitchSlider.setVisible(showPitchPage);
@@ -2180,7 +2233,7 @@ void StripControl::paintModulationLane(juce::Graphics& g)
 void StripControl::applyModulationPoint(juce::Point<int> p)
 {
     auto* engine = processor.getAudioEngine();
-    if (!engine || stripIndex >= MlrVSTAudioProcessor::MaxStrips)
+    if (!engine || stripIndex >= StepVstHostAudioProcessor::MaxStrips)
         return;
 
     auto lane = getModulationLaneBounds().reduced(12, 2);
@@ -2246,7 +2299,7 @@ int StripControl::getModulationStepFromPoint(juce::Point<int> p) const
 void StripControl::applyModulationCellDuplicateFromDrag(int deltaY)
 {
     auto* engine = processor.getAudioEngine();
-    if (!engine || stripIndex >= MlrVSTAudioProcessor::MaxStrips || modTransformStep < 0)
+    if (!engine || stripIndex >= StepVstHostAudioProcessor::MaxStrips || modTransformStep < 0)
         return;
 
     const int lengthBars = juce::jlimit(1, ModernAudioEngine::MaxModBars, engine->getModLengthBars(stripIndex));
@@ -2265,7 +2318,7 @@ void StripControl::applyModulationCellDuplicateFromDrag(int deltaY)
 void StripControl::applyModulationCellCurveFromDrag(int deltaY, bool rampUpMode)
 {
     auto* engine = processor.getAudioEngine();
-    if (!engine || stripIndex >= MlrVSTAudioProcessor::MaxStrips || modTransformStep < 0)
+    if (!engine || stripIndex >= StepVstHostAudioProcessor::MaxStrips || modTransformStep < 0)
         return;
 
     const int lengthBars = juce::jlimit(1, ModernAudioEngine::MaxModBars, engine->getModLengthBars(stripIndex));
@@ -2294,7 +2347,7 @@ void StripControl::mouseDown(const juce::MouseEvent& e)
     if (modulationLaneView)
     {
         auto* engine = processor.getAudioEngine();
-        if (!engine || stripIndex >= MlrVSTAudioProcessor::MaxStrips)
+        if (!engine || stripIndex >= StepVstHostAudioProcessor::MaxStrips)
             return;
 
         const auto state = engine->getModSequencerState(stripIndex);
@@ -2362,7 +2415,7 @@ void StripControl::mouseDoubleClick(const juce::MouseEvent& e)
         return;
 
     auto* engine = processor.getAudioEngine();
-    if (!engine || stripIndex >= MlrVSTAudioProcessor::MaxStrips)
+    if (!engine || stripIndex >= StepVstHostAudioProcessor::MaxStrips)
         return;
 
     const int step = getModulationStepFromPoint(e.getPosition());
@@ -2405,11 +2458,12 @@ void StripControl::mouseUp(const juce::MouseEvent&)
 void StripControl::hideAllPrimaryControls()
 {
     auto hide = [](juce::Component& c){ c.setVisible(false); };
-    hide(loadButton); hide(playModeBox); hide(directionModeBox);
+    hide(loadButton); hide(muteButton); hide(soloButton); hide(directionModeBox);
+    hide(beatSpaceCategoryLabel); hide(beatSpaceCategoryBox);
     hide(volumeSlider); hide(panSlider); hide(pitchSlider); hide(speedSlider); hide(scratchSlider); hide(sliceLengthSlider); hide(patternLengthBox); hide(stepLengthReadoutBox);
     hide(laneMidiChannelBox); hide(laneMidiNoteBox);
     hide(stepAttackSlider); hide(stepDecaySlider); hide(stepReleaseSlider);
-    hide(tempoLabel); hide(recordBarsBox);
+    hide(tempoLabel);
     hide(volumeLabel); hide(panLabel); hide(pitchLabel); hide(speedLabel); hide(scratchLabel); hide(sliceLengthLabel);
     hide(stepAttackLabel); hide(stepDecayLabel); hide(stepReleaseLabel);
     hide(laneMidiChannelLabel); hide(laneMidiNoteLabel);
@@ -2607,7 +2661,8 @@ void StripControl::resized()
     }
 
     loadButton.setVisible(true);
-    playModeBox.setVisible(true);
+    muteButton.setVisible(true);
+    soloButton.setVisible(true);
     directionModeBox.setVisible(true);
     modTargetLabel.setVisible(false);
     modTargetBox.setVisible(false);
@@ -2644,28 +2699,38 @@ void StripControl::resized()
 
     const int rowGap = isGrainMode ? 0 : 1;
 
-    // Top row: Load
-    const int topRowHeight = isGrainMode ? (isGrainSpacePage ? 12 : 14) : 18;
+    // Top row: compact load + direction mode to keep all strip controls visible.
+    const int topRowHeight = isGrainMode ? (isGrainSpacePage ? 12 : 14) : 17;
     auto topRow = controlsArea.removeFromTop(topRowHeight);
-    loadButton.setBounds(topRow.reduced(0, 0));
+    const int loadWidth = juce::jlimit(24, isGrainMode ? 34 : 42, topRow.getWidth() / 7);
+    const int toggleWidth = juce::jlimit(isGrainMode ? 22 : 30, isGrainMode ? 32 : 44, topRow.getWidth() / 5);
+    loadButton.setBounds(topRow.removeFromLeft(loadWidth));
+    topRow.removeFromLeft(2);
+    muteButton.setBounds(topRow.removeFromLeft(toggleWidth));
+    topRow.removeFromLeft(1);
+    soloButton.setBounds(topRow.removeFromLeft(toggleWidth));
+    topRow.removeFromLeft(2);
+    if (stripIndex < StepVstHostAudioProcessor::BeatSpaceChannels)
+    {
+        const int catLabelW = 22;
+        const int catBoxW = juce::jlimit(58, 88, topRow.getWidth() / 3);
+        beatSpaceCategoryLabel.setBounds(topRow.removeFromLeft(catLabelW));
+        beatSpaceCategoryBox.setBounds(topRow.removeFromLeft(catBoxW));
+        topRow.removeFromLeft(2);
+    }
+    else
+    {
+        beatSpaceCategoryLabel.setBounds({});
+        beatSpaceCategoryBox.setBounds({});
+    }
+    directionModeBox.setBounds(topRow.reduced(1, 0));
     controlsArea.removeFromTop(rowGap);
     
-    // Second row: Play mode and direction mode
-    const int modesRowHeight = isGrainMode ? (isGrainSpacePage ? 12 : 14) : 18;
-    auto modesRow = controlsArea.removeFromTop(modesRowHeight);
-    int halfWidth = modesRow.getWidth() / 2;
-    playModeBox.setBounds(modesRow.removeFromLeft(halfWidth).reduced(1, 0));
-    directionModeBox.setBounds(modesRow.reduced(1, 0));
-    controlsArea.removeFromTop(rowGap);
-    
-    // Check if we have enough height for compact transport + bar controls.
-    const int requiredTopControlsHeight = 22 + 2 + 20 + 2 + 30 + 10 + 10;
-    bool showTempoControls = (!isGrainMode) && (controlsArea.getHeight() >= requiredTopControlsHeight);
+    // Check if we have enough height for compact tempo controls.
+    const int requiredTopControlsHeight = 34;
+    bool showTempoControls = (!isGrainMode && !isStepMode) && (controlsArea.getHeight() >= requiredTopControlsHeight);
 
-    // Update visibility
-    const bool showRecordBars = (!isGrainMode) && controlsArea.getHeight() >= 18;
     tempoLabel.setVisible(showTempoControls);
-    recordBarsBox.setVisible(showRecordBars);
 
     // Tempo controls row - only if we have space
     if (showTempoControls)
@@ -2675,10 +2740,8 @@ void StripControl::resized()
         controlsArea.removeFromTop(2);
 
         auto recBarsRow = controlsArea.removeFromTop(18);
-        recordBarsBox.setBounds(recBarsRow.removeFromLeft(70));
         if (isStepMode)
         {
-            recBarsRow.removeFromLeft(4);
             const int lenWidth = juce::jlimit(18, 26, recBarsRow.getWidth());
             patternLengthBox.setBounds(recBarsRow.removeFromLeft(lenWidth));
             if (recBarsRow.getWidth() > 0)
@@ -2690,49 +2753,81 @@ void StripControl::resized()
         }
         controlsArea.removeFromTop(2);
     }
-    else if (showRecordBars)
+    else if (isStepMode)
     {
-        auto recBarsRow = controlsArea.removeFromTop(16);
-        recordBarsBox.setBounds(recBarsRow.removeFromLeft(66));
-        if (isStepMode)
+        // Keep step strip controls legible first; auxiliary rows appear only on taller strips.
+        const bool showStepAuxControls = controlsArea.getHeight() >= 86;
+        if (showStepAuxControls)
         {
-            recBarsRow.removeFromLeft(4);
-            const int lenWidth = juce::jlimit(18, 24, recBarsRow.getWidth());
-            patternLengthBox.setBounds(recBarsRow.removeFromLeft(lenWidth));
-            if (recBarsRow.getWidth() > 0)
+            auto lenRow = controlsArea.removeFromTop(14);
+            const int lenWidth = juce::jlimit(18, 24, lenRow.getWidth());
+            patternLengthBox.setBounds(lenRow.removeFromLeft(lenWidth));
+            if (lenRow.getWidth() > 0)
             {
-                recBarsRow.removeFromLeft(3);
-                const int readoutWidth = juce::jlimit(32, 58, recBarsRow.getWidth());
-                stepLengthReadoutBox.setBounds(recBarsRow.removeFromLeft(readoutWidth));
+                lenRow.removeFromLeft(3);
+                const int readoutWidth = juce::jlimit(28, 56, lenRow.getWidth());
+                stepLengthReadoutBox.setBounds(lenRow.removeFromLeft(readoutWidth));
             }
-        }
-        controlsArea.removeFromTop(2);
-    }
-    else if (isStepMode && controlsArea.getHeight() >= 14)
-    {
-        auto lenRow = controlsArea.removeFromTop(16);
-        const int lenWidth = juce::jlimit(18, 24, lenRow.getWidth());
-        patternLengthBox.setBounds(lenRow.removeFromLeft(lenWidth));
-        if (lenRow.getWidth() > 0)
-        {
-            lenRow.removeFromLeft(3);
-            const int readoutWidth = juce::jlimit(32, 58, lenRow.getWidth());
-            stepLengthReadoutBox.setBounds(lenRow.removeFromLeft(readoutWidth));
-        }
-        controlsArea.removeFromTop(2);
-    }
+            controlsArea.removeFromTop(1);
 
-    if (isStepMode && controlsArea.getHeight() >= 12)
-    {
-        auto midiRow = controlsArea.removeFromTop(showTempoControls ? 16 : 14);
-        laneMidiChannelLabel.setBounds(midiRow.removeFromLeft(18));
-        laneMidiChannelBox.setBounds(midiRow.removeFromLeft(34));
-        midiRow.removeFromLeft(5);
-        laneMidiNoteLabel.setBounds(midiRow.removeFromLeft(28));
-        laneMidiNoteBox.setBounds(midiRow.removeFromLeft(42));
-        controlsArea.removeFromTop(2);
+            auto midiRow = controlsArea.removeFromTop(14);
+            laneMidiChannelLabel.setBounds(midiRow.removeFromLeft(16));
+            laneMidiChannelBox.setBounds(midiRow.removeFromLeft(30));
+            midiRow.removeFromLeft(4);
+            laneMidiNoteLabel.setBounds(midiRow.removeFromLeft(26));
+            laneMidiNoteBox.setBounds(midiRow.removeFromLeft(38));
+            controlsArea.removeFromTop(1);
+        }
     }
     
+    if (isStepMode)
+    {
+        // Dedicated step layout keeps VOL/PAN and A/D/R visible on small strip heights.
+        const int stepGap = 2;
+        auto stepArea = controlsArea;
+
+        const int totalStepHeight = juce::jmax(1, stepArea.getHeight());
+        const int labelHeight = juce::jlimit(8, 10, juce::jmax(8, totalStepHeight / 8));
+        const int knobBudget = juce::jmax(24, totalStepHeight - (2 * labelHeight) - (3 * stepGap));
+        const int volKnobHeight = juce::jmax(12, knobBudget / 2);
+        const int envKnobHeight = juce::jmax(12, knobBudget - volKnobHeight);
+
+        auto volRow = stepArea.removeFromTop(volKnobHeight);
+        const int pairWidth = juce::jmax(8, (volRow.getWidth() - stepGap) / 2);
+        auto volArea = volRow.removeFromLeft(pairWidth);
+        volRow.removeFromLeft(stepGap);
+        auto panArea = volRow;
+        volumeSlider.setBounds(volArea.reduced(1));
+        panSlider.setBounds(panArea.reduced(1));
+
+        stepArea.removeFromTop(2);
+        auto volLabelsRow = stepArea.removeFromTop(labelHeight);
+        const int pairLabelWidth = juce::jmax(8, (volLabelsRow.getWidth() - stepGap) / 2);
+        volumeLabel.setBounds(volLabelsRow.removeFromLeft(pairLabelWidth));
+        volLabelsRow.removeFromLeft(stepGap);
+        panLabel.setBounds(volLabelsRow);
+
+        stepArea.removeFromTop(stepGap);
+        auto envRow = stepArea.removeFromTop(envKnobHeight);
+        const int envGap = 3;
+        const int envWidth = juce::jmax(8, (envRow.getWidth() - (2 * envGap)) / 3);
+        stepAttackSlider.setBounds(envRow.removeFromLeft(envWidth).reduced(0));
+        envRow.removeFromLeft(envGap);
+        stepDecaySlider.setBounds(envRow.removeFromLeft(envWidth).reduced(0));
+        envRow.removeFromLeft(envGap);
+        stepReleaseSlider.setBounds(envRow.reduced(0));
+
+        stepArea.removeFromTop(stepGap);
+        auto envLabelsRow = stepArea.removeFromTop(labelHeight);
+        const int envLabelWidth = juce::jmax(8, (envLabelsRow.getWidth() - (2 * envGap)) / 3);
+        stepAttackLabel.setBounds(envLabelsRow.removeFromLeft(envLabelWidth));
+        envLabelsRow.removeFromLeft(envGap);
+        stepDecayLabel.setBounds(envLabelsRow.removeFromLeft(envLabelWidth));
+        envLabelsRow.removeFromLeft(envGap);
+        stepReleaseLabel.setBounds(envLabelsRow);
+        return;
+    }
+
     // Rotary knobs row.
     const int knobsRowHeight = isGrainMode ? (isGrainSpacePage ? 20 : 22) : 30;
     auto knobsRow = controlsArea.removeFromTop(knobsRowHeight);
@@ -2745,20 +2840,6 @@ void StripControl::resized()
         grainSizeSlider.setBounds(knobsRow.removeFromLeft(mainKnobWidth).reduced(1));
         grainDensitySlider.setBounds(knobsRow.removeFromLeft(mainKnobWidth).reduced(1));
         knobsRow.removeFromLeft(mainKnobWidth);
-    }
-    else if (isStepMode)
-    {
-        const int stepGap = 2;
-        const int stepKnobWidth = juce::jmax(8, (knobsRow.getWidth() - (4 * stepGap)) / 5);
-        volumeSlider.setBounds(knobsRow.removeFromLeft(stepKnobWidth).reduced(1));
-        knobsRow.removeFromLeft(stepGap);
-        panSlider.setBounds(knobsRow.removeFromLeft(stepKnobWidth).reduced(1));
-        knobsRow.removeFromLeft(stepGap);
-        stepAttackSlider.setBounds(knobsRow.removeFromLeft(stepKnobWidth).reduced(1));
-        knobsRow.removeFromLeft(stepGap);
-        stepDecaySlider.setBounds(knobsRow.removeFromLeft(stepKnobWidth).reduced(1));
-        knobsRow.removeFromLeft(stepGap);
-        stepReleaseSlider.setBounds(knobsRow.reduced(1));
     }
     else
     {
@@ -2804,20 +2885,6 @@ void StripControl::resized()
         grainSizeDivLabel.setBounds(sizeLabelArea.removeFromLeft(syncModeW));
         grainDensityLabel.setBounds(labelsRow.removeFromLeft(mainKnobWidth));
         labelsRow.removeFromLeft(mainKnobWidth);
-    }
-    else if (isStepMode)
-    {
-        const int stepGap = 2;
-        const int stepLabelWidth = juce::jmax(8, (labelsRow.getWidth() - (4 * stepGap)) / 5);
-        volumeLabel.setBounds(labelsRow.removeFromLeft(stepLabelWidth));
-        labelsRow.removeFromLeft(stepGap);
-        panLabel.setBounds(labelsRow.removeFromLeft(stepLabelWidth));
-        labelsRow.removeFromLeft(stepGap);
-        stepAttackLabel.setBounds(labelsRow.removeFromLeft(stepLabelWidth));
-        labelsRow.removeFromLeft(stepGap);
-        stepDecayLabel.setBounds(labelsRow.removeFromLeft(stepLabelWidth));
-        labelsRow.removeFromLeft(stepGap);
-        stepReleaseLabel.setBounds(labelsRow);
     }
     else
     {
@@ -2915,13 +2982,362 @@ void StripControl::resized()
 }
 
 
+void StripControl::rebuildBeatSpaceCategoryMenu()
+{
+    if (stripIndex < 0 || stripIndex >= StepVstHostAudioProcessor::BeatSpaceChannels)
+        return;
+
+    const int selectedBefore = beatSpaceCategoryBox.getSelectedId();
+    const int assignedSpace = processor.getBeatSpaceChannelSpaceAssignment(stripIndex);
+    const int bookmarkCount = processor.getBeatSpaceBookmarkCount(stripIndex);
+
+    suppressBeatSpaceCategoryAction = true;
+    beatSpaceCategoryBox.clear(juce::dontSendNotification);
+    for (int space = 0; space < StepVstHostAudioProcessor::BeatSpaceChannels; ++space)
+        beatSpaceCategoryBox.addItem(StepVstHostAudioProcessor::getBeatSpaceSpaceName(space), space + 1);
+
+    beatSpaceCategoryBox.addSeparator();
+    beatSpaceCategoryBox.addItem("Nav Coarse", kBeatSpaceActionNavCoarse);
+    beatSpaceCategoryBox.addItem("Nav Fine", kBeatSpaceActionNavFine);
+
+    beatSpaceCategoryBox.addSeparator();
+    beatSpaceCategoryBox.addItem("Lock 0%", kBeatSpaceActionZoneLock0);
+    beatSpaceCategoryBox.addItem("Lock 25%", kBeatSpaceActionZoneLock25);
+    beatSpaceCategoryBox.addItem("Lock 50%", kBeatSpaceActionZoneLock50);
+    beatSpaceCategoryBox.addItem("Lock 75%", kBeatSpaceActionZoneLock75);
+    beatSpaceCategoryBox.addItem("Lock 100%", kBeatSpaceActionZoneLock100);
+
+    beatSpaceCategoryBox.addSeparator();
+    beatSpaceCategoryBox.addItem("Random Zone", kBeatSpaceActionRandomZone);
+    beatSpaceCategoryBox.addItem("Random Near", kBeatSpaceActionRandomNear);
+    beatSpaceCategoryBox.addItem("Random Character", kBeatSpaceActionRandomCharacter);
+    beatSpaceCategoryBox.addItem("Random Full", kBeatSpaceActionRandomFull);
+    beatSpaceCategoryBox.addItem("Nearest 8", kBeatSpaceActionNearest8);
+
+    beatSpaceCategoryBox.addSeparator();
+    beatSpaceCategoryBox.addItem("Path Add Point", kBeatSpaceActionPathAdd);
+    beatSpaceCategoryBox.addItem("Path Start 1/4", kBeatSpaceActionPathStartQuarter);
+    beatSpaceCategoryBox.addItem("Path Start 1 Bar", kBeatSpaceActionPathStartBar);
+    beatSpaceCategoryBox.addItem("Path Stop", kBeatSpaceActionPathStop);
+    beatSpaceCategoryBox.addItem("Path Clear", kBeatSpaceActionPathClear);
+
+    beatSpaceCategoryBox.addSeparator();
+    beatSpaceCategoryBox.addItem("Bookmark Save Current", kBeatSpaceActionBookmarkAdd);
+    for (int slot = 0; slot < kBeatSpaceBookmarkSlots; ++slot)
+    {
+        const auto tag = processor.getBeatSpaceBookmarkTag(stripIndex, slot).trim();
+        if (tag.isEmpty())
+            continue;
+        beatSpaceCategoryBox.addItem(
+            "Bookmark " + juce::String(slot + 1) + " " + tag,
+            kBeatSpaceActionBookmarkRecallBase + slot);
+    }
+    if (bookmarkCount > 0)
+        beatSpaceCategoryBox.addItem("Bookmark Clear", kBeatSpaceActionBookmarkClear);
+
+    int restoreId = assignedSpace + 1;
+    if (selectedBefore >= 1 && selectedBefore <= kBeatSpaceCategoryCount)
+        restoreId = selectedBefore;
+    beatSpaceCategoryBox.setSelectedId(restoreId, juce::dontSendNotification);
+    suppressBeatSpaceCategoryAction = false;
+}
+
+bool StripControl::handleBeatSpaceCategoryAction(int selectedId)
+{
+    if (stripIndex < 0 || stripIndex >= StepVstHostAudioProcessor::BeatSpaceChannels)
+        return false;
+
+    auto setZoom = [this](int targetLevel)
+    {
+        auto state = processor.getBeatSpaceVisualState();
+        targetLevel = juce::jlimit(0, 2, targetLevel);
+        while (state.zoomLevel < targetLevel)
+        {
+            processor.beatSpaceAdjustZoom(+1);
+            state = processor.getBeatSpaceVisualState();
+        }
+        while (state.zoomLevel > targetLevel)
+        {
+            processor.beatSpaceAdjustZoom(-1);
+            state = processor.getBeatSpaceVisualState();
+        }
+    };
+
+    switch (selectedId)
+    {
+        case kBeatSpaceActionNavCoarse:
+            setZoom(0);
+            break;
+        case kBeatSpaceActionNavFine:
+            setZoom(2);
+            break;
+        case kBeatSpaceActionZoneLock0:
+            processor.setBeatSpaceZoneLockStrength(stripIndex, 0.0f);
+            break;
+        case kBeatSpaceActionZoneLock25:
+            processor.setBeatSpaceZoneLockStrength(stripIndex, 0.25f);
+            break;
+        case kBeatSpaceActionZoneLock50:
+            processor.setBeatSpaceZoneLockStrength(stripIndex, 0.50f);
+            break;
+        case kBeatSpaceActionZoneLock75:
+            processor.setBeatSpaceZoneLockStrength(stripIndex, 0.75f);
+            break;
+        case kBeatSpaceActionZoneLock100:
+            processor.setBeatSpaceZoneLockStrength(stripIndex, 1.0f);
+            break;
+        case kBeatSpaceActionRandomZone:
+            processor.setBeatSpaceRandomizeMode(StepVstHostAudioProcessor::BeatSpaceRandomizeMode::WithinCategory);
+            processor.beatSpaceRandomizeChannel(stripIndex, StepVstHostAudioProcessor::BeatSpaceRandomizeMode::WithinCategory, true);
+            break;
+        case kBeatSpaceActionRandomNear:
+            processor.setBeatSpaceRandomizeMode(StepVstHostAudioProcessor::BeatSpaceRandomizeMode::NearCurrent);
+            processor.beatSpaceRandomizeChannel(stripIndex, StepVstHostAudioProcessor::BeatSpaceRandomizeMode::NearCurrent, true);
+            break;
+        case kBeatSpaceActionRandomCharacter:
+            processor.setBeatSpaceRandomizeMode(StepVstHostAudioProcessor::BeatSpaceRandomizeMode::PreserveCharacter);
+            processor.beatSpaceRandomizeChannel(stripIndex, StepVstHostAudioProcessor::BeatSpaceRandomizeMode::PreserveCharacter, true);
+            break;
+        case kBeatSpaceActionRandomFull:
+            processor.setBeatSpaceRandomizeMode(StepVstHostAudioProcessor::BeatSpaceRandomizeMode::FullWild);
+            processor.beatSpaceRandomizeChannel(stripIndex, StepVstHostAudioProcessor::BeatSpaceRandomizeMode::FullWild, true);
+            break;
+        case kBeatSpaceActionNearest8:
+        {
+            const auto nearest = processor.getBeatSpaceNearestPresetSlots(stripIndex, 8);
+            if (!nearest.empty())
+            {
+                const int assignedSpace = processor.getBeatSpaceChannelSpaceAssignment(stripIndex);
+                const auto spaceName = StepVstHostAudioProcessor::getBeatSpaceSpaceName(assignedSpace);
+                juce::PopupMenu menu;
+                menu.addSectionHeader("Nearest 8 (" + spaceName + ")");
+                for (const int slot : nearest)
+                {
+                    const int safeSlot = juce::jlimit(0, StepVstHostAudioProcessor::BeatSpacePresetSlotsPerSpace - 1, slot);
+                    menu.addItem(
+                        safeSlot + 1,
+                        "#" + juce::String(safeSlot + 1).paddedLeft('0', 2));
+                }
+                auto safeThis = juce::Component::SafePointer<StripControl>(this);
+                menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&beatSpaceCategoryBox),
+                    [safeThis](int selected)
+                    {
+                        if (safeThis == nullptr || selected <= 0)
+                            return;
+                        safeThis->processor.loadBeatSpacePresetFromAssignedSpace(
+                            safeThis->stripIndex,
+                            selected - 1);
+                    });
+            }
+            break;
+        }
+        case kBeatSpaceActionPathAdd:
+            processor.beatSpacePathAddCurrentPoint(stripIndex);
+            break;
+        case kBeatSpaceActionPathStartQuarter:
+            processor.beatSpacePathStart(stripIndex, StepVstHostAudioProcessor::BeatSpacePathMode::QuarterNote);
+            break;
+        case kBeatSpaceActionPathStartBar:
+            processor.beatSpacePathStart(stripIndex, StepVstHostAudioProcessor::BeatSpacePathMode::OneBar);
+            break;
+        case kBeatSpaceActionPathStop:
+            processor.beatSpacePathStop(stripIndex);
+            break;
+        case kBeatSpaceActionPathClear:
+            processor.beatSpacePathClear(stripIndex);
+            break;
+        case kBeatSpaceActionBookmarkAdd:
+        {
+            const auto state = processor.getBeatSpaceVisualState();
+            const auto p = state.channelPoints[static_cast<size_t>(stripIndex)];
+            const auto tag = "X" + juce::String(p.x) + " Y" + juce::String(p.y);
+            processor.beatSpaceAddBookmark(stripIndex, tag);
+            break;
+        }
+        case kBeatSpaceActionBookmarkClear:
+            processor.beatSpaceClearBookmarks(stripIndex);
+            break;
+        default:
+            if (selectedId >= kBeatSpaceActionBookmarkRecallBase
+                && selectedId < (kBeatSpaceActionBookmarkRecallBase + kBeatSpaceBookmarkSlots))
+            {
+                const int slot = selectedId - kBeatSpaceActionBookmarkRecallBase;
+                processor.beatSpaceRecallBookmark(stripIndex, slot, true);
+            }
+            break;
+    }
+
+    rebuildBeatSpaceCategoryMenu();
+    return true;
+}
+
 void StripControl::loadSample()
 {
+    if (stripIndex >= 0 && stripIndex < StepVstHostAudioProcessor::BeatSpaceChannels)
+    {
+        const int assignedSpace = processor.getBeatSpaceChannelSpaceAssignment(stripIndex);
+        const auto spaceName = StepVstHostAudioProcessor::getBeatSpaceSpaceName(assignedSpace);
+        const auto displaySlots = processor.getBeatSpacePresetDisplaySlotsForAssignedSpace(stripIndex);
+
+        juce::PopupMenu menu;
+        menu.addSectionHeader("BeatSpace " + spaceName + " (Lane " + juce::String(stripIndex + 1) + ")");
+
+        const auto nearest = processor.getBeatSpaceNearestPresetSlots(stripIndex, 8);
+        if (!nearest.empty())
+        {
+            menu.addSectionHeader("Nearest 8");
+            for (const int slot : nearest)
+            {
+                const int safeSlot = juce::jlimit(0, StepVstHostAudioProcessor::BeatSpacePresetSlotsPerSpace - 1, slot);
+                menu.addItem(
+                    kBeatSpaceMenuNearestBase + safeSlot,
+                    "Near " + juce::String(safeSlot + 1).paddedLeft('0', 2)
+                        + "  " + processor.getBeatSpacePresetLabelForSpaceSlot(assignedSpace, safeSlot));
+            }
+            menu.addSeparator();
+        }
+
+        for (int displayIndex = 0; displayIndex < static_cast<int>(displaySlots.size()); ++displayIndex)
+        {
+            const int slot = displaySlots[static_cast<size_t>(displayIndex)];
+            const auto label = processor.getBeatSpacePresetLabelForSpaceSlot(assignedSpace, slot);
+            menu.addItem(
+                kBeatSpaceMenuSlotBase + displayIndex,
+                juce::String("#") + juce::String(slot + 1).paddedLeft('0', 2) + "  " + label);
+        }
+
+        juce::PopupMenu manageMenu;
+        for (int displayIndex = 0; displayIndex < static_cast<int>(displaySlots.size()); ++displayIndex)
+        {
+            const int slot = displaySlots[static_cast<size_t>(displayIndex)];
+            const auto label = processor.getBeatSpacePresetLabelForSpaceSlot(assignedSpace, slot);
+            juce::PopupMenu slotMenu;
+            slotMenu.addItem(kBeatSpaceMenuManageRenameBase + displayIndex, "Rename...");
+            slotMenu.addItem(kBeatSpaceMenuManageMoveUpBase + displayIndex, "Move Up", displayIndex > 0);
+            slotMenu.addItem(kBeatSpaceMenuManageMoveDownBase + displayIndex, "Move Down",
+                             displayIndex < (static_cast<int>(displaySlots.size()) - 1));
+            slotMenu.addItem(kBeatSpaceMenuManageDeleteBase + displayIndex, "Delete",
+                             displaySlots.size() > 1);
+            manageMenu.addSubMenu(
+                juce::String("#") + juce::String(slot + 1).paddedLeft('0', 2) + "  " + label,
+                slotMenu);
+        }
+        manageMenu.addSeparator();
+        manageMenu.addItem(kBeatSpaceMenuManageReset, "Reset Slot List");
+        menu.addSeparator();
+        menu.addSubMenu("Manage Presets", manageMenu);
+
+        auto safeThis = juce::Component::SafePointer<StripControl>(this);
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&loadButton),
+            [safeThis](int selectedId)
+            {
+                if (safeThis == nullptr || selectedId <= 0)
+                    return;
+
+                if (selectedId >= kBeatSpaceMenuSlotBase
+                    && selectedId < (kBeatSpaceMenuSlotBase + StepVstHostAudioProcessor::BeatSpacePresetSlotsPerSpace))
+                {
+                    const int displayIndex = selectedId - kBeatSpaceMenuSlotBase;
+                    safeThis->processor.loadBeatSpacePresetFromAssignedSpaceDisplayIndex(
+                        safeThis->stripIndex,
+                        displayIndex);
+                    return;
+                }
+
+                if (selectedId >= kBeatSpaceMenuNearestBase
+                    && selectedId < (kBeatSpaceMenuNearestBase + StepVstHostAudioProcessor::BeatSpacePresetSlotsPerSpace))
+                {
+                    const int slot = selectedId - kBeatSpaceMenuNearestBase;
+                    safeThis->processor.loadBeatSpacePresetFromAssignedSpace(
+                        safeThis->stripIndex,
+                        slot);
+                    return;
+                }
+
+                if (selectedId >= kBeatSpaceMenuManageMoveUpBase
+                    && selectedId < (kBeatSpaceMenuManageMoveUpBase + StepVstHostAudioProcessor::BeatSpacePresetSlotsPerSpace))
+                {
+                    const int displayIndex = selectedId - kBeatSpaceMenuManageMoveUpBase;
+                    safeThis->processor.moveBeatSpacePresetForAssignedSpace(
+                        safeThis->stripIndex,
+                        displayIndex,
+                        displayIndex - 1);
+                    return;
+                }
+
+                if (selectedId >= kBeatSpaceMenuManageMoveDownBase
+                    && selectedId < (kBeatSpaceMenuManageMoveDownBase + StepVstHostAudioProcessor::BeatSpacePresetSlotsPerSpace))
+                {
+                    const int displayIndex = selectedId - kBeatSpaceMenuManageMoveDownBase;
+                    safeThis->processor.moveBeatSpacePresetForAssignedSpace(
+                        safeThis->stripIndex,
+                        displayIndex,
+                        displayIndex + 1);
+                    return;
+                }
+
+                if (selectedId >= kBeatSpaceMenuManageDeleteBase
+                    && selectedId < (kBeatSpaceMenuManageDeleteBase + StepVstHostAudioProcessor::BeatSpacePresetSlotsPerSpace))
+                {
+                    const int displayIndex = selectedId - kBeatSpaceMenuManageDeleteBase;
+                    safeThis->processor.deleteBeatSpacePresetForAssignedSpace(
+                        safeThis->stripIndex,
+                        displayIndex);
+                    return;
+                }
+
+                if (selectedId >= kBeatSpaceMenuManageRenameBase
+                    && selectedId < (kBeatSpaceMenuManageRenameBase + StepVstHostAudioProcessor::BeatSpacePresetSlotsPerSpace))
+                {
+                    const int displayIndex = selectedId - kBeatSpaceMenuManageRenameBase;
+                    const int spaceForRename = safeThis->processor.getBeatSpaceChannelSpaceAssignment(safeThis->stripIndex);
+                    const auto slotsForRename = safeThis->processor.getBeatSpacePresetDisplaySlotsForAssignedSpace(safeThis->stripIndex);
+                    if (displayIndex < 0 || displayIndex >= static_cast<int>(slotsForRename.size()))
+                        return;
+
+                    const int slot = slotsForRename[static_cast<size_t>(displayIndex)];
+                    const auto currentLabel = safeThis->processor.getBeatSpacePresetLabelForSpaceSlot(spaceForRename, slot);
+
+                    auto* renameWindow = new juce::AlertWindow(
+                        "Rename BeatSpace Preset",
+                        "Enter display name for this preset slot.",
+                        juce::AlertWindow::NoIcon);
+                    renameWindow->addTextEditor("name", currentLabel, "Name:");
+                    renameWindow->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+                    renameWindow->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+                    renameWindow->setEscapeKeyCancels(true);
+                    auto safeWindow = juce::Component::SafePointer<juce::AlertWindow>(renameWindow);
+                    renameWindow->enterModalState(
+                        true,
+                        juce::ModalCallbackFunction::create(
+                            [safeThis, safeWindow, displayIndex](int result)
+                            {
+                                if (safeThis == nullptr || safeWindow == nullptr || result != 1)
+                                    return;
+                                safeThis->processor.renameBeatSpacePresetForAssignedSpace(
+                                    safeThis->stripIndex,
+                                    displayIndex,
+                                    safeWindow->getTextEditorContents("name"));
+                            }),
+                        true);
+                    renameWindow->centreAroundComponent(safeThis.getComponent(), 360, 140);
+                    return;
+                }
+
+                if (selectedId == kBeatSpaceMenuManageReset)
+                {
+                    safeThis->processor.resetBeatSpacePresetLayoutForAssignedSpace(
+                        safeThis->stripIndex);
+                }
+            });
+        return;
+    }
+
     // Get current play mode to determine which path to use
     auto* strip = processor.getAudioEngine()->getStrip(stripIndex);
     bool isStepMode = (strip && strip->getPlayMode() == EnhancedAudioStrip::PlayMode::Step);
-    auto mode = isStepMode ? MlrVSTAudioProcessor::SamplePathMode::Step
-                           : MlrVSTAudioProcessor::SamplePathMode::Loop;
+    auto mode = isStepMode ? StepVstHostAudioProcessor::SamplePathMode::Step
+                           : StepVstHostAudioProcessor::SamplePathMode::Loop;
     juce::File startingDirectory = processor.getDefaultSampleDirectory(stripIndex, mode);
     
     // If no last path, use default
@@ -2953,8 +3369,8 @@ void StripControl::loadSampleFromFile(const juce::File& file)
 
     auto* strip = processor.getAudioEngine() ? processor.getAudioEngine()->getStrip(stripIndex) : nullptr;
     const bool isStepMode = (strip && strip->getPlayMode() == EnhancedAudioStrip::PlayMode::Step);
-    auto mode = isStepMode ? MlrVSTAudioProcessor::SamplePathMode::Step
-                           : MlrVSTAudioProcessor::SamplePathMode::Loop;
+    auto mode = isStepMode ? StepVstHostAudioProcessor::SamplePathMode::Step
+                           : StepVstHostAudioProcessor::SamplePathMode::Loop;
     processor.setDefaultSampleDirectory(stripIndex, mode, file.getParentDirectory());
 }
 
@@ -3168,46 +3584,34 @@ void StripControl::updateFromEngine()
         stepDecaySlider.setValue(strip->getStepEnvelopeDecayMs(), juce::dontSendNotification);
     if (!stepReleaseSlider.isMouseButtonDown())
         stepReleaseSlider.setValue(strip->getStepEnvelopeReleaseMs(), juce::dontSendNotification);
+    if (stripIndex >= 0 && stripIndex < StepVstHostAudioProcessor::BeatSpaceChannels)
     {
-        const float recordingBarsBeats = static_cast<float>(juce::jlimit(1, 8, strip->getRecordingBars()) * 4);
-        float beats = strip->getBeatsPerLoop();
-        if (!(beats > 0.0f && std::isfinite(beats)))
-            beats = recordingBarsBeats;
-        else if (strip->isPlaying() && beats >= 4.0f && std::abs(beats - recordingBarsBeats) > 0.01f)
-            beats = recordingBarsBeats;
-
-        struct BeatChoice { float beats; int id; };
-        static constexpr BeatChoice choices[] {
-            { 1.0f, 25 }, { 2.0f, 50 }, { 4.0f, 100 },
-            { 8.0f, 200 }, { 16.0f, 400 }, { 32.0f, 800 }
-        };
-
-        int selectedId = 100;
-        float best = std::numeric_limits<float>::max();
-        for (const auto& c : choices)
-        {
-            const float d = std::abs(beats - c.beats);
-            if (d < best)
-            {
-                best = d;
-                selectedId = c.id;
-            }
-        }
-        recordBarsBox.setSelectedId(selectedId, juce::dontSendNotification);
-        recordBarsBox.setEnabled(processor.canChangeBarLengthNow(stripIndex));
+        beatSpaceCategoryBox.setSelectedId(
+            processor.getBeatSpaceChannelSpaceAssignment(stripIndex) + 1,
+            juce::dontSendNotification);
     }
-    // Sync volume and pan from engine
+    muteButton.setToggleState(strip->isMuted(), juce::dontSendNotification);
+    soloButton.setToggleState(strip->isSolo(), juce::dontSendNotification);
+    // Sync volume/pan/pitch from parameters so preset recall always overrides UI state.
+    const auto getParamValue = [this](const juce::String& paramId, float fallback)
+    {
+        if (auto* raw = processor.parameters.getRawParameterValue(paramId))
+            return raw->load();
+        return fallback;
+    };
+
+    const float paramVolume = getParamValue("stripVolume" + juce::String(stripIndex), strip->getVolume());
+    const float paramPan = getParamValue("stripPan" + juce::String(stripIndex), strip->getPan());
+    const float paramPitch = getParamValue(
+        "stripPitch" + juce::String(stripIndex),
+        processor.getPitchSemitonesForDisplay(*strip));
+
     if (!modulates(ModernAudioEngine::ModTarget::Volume))
-        volumeSlider.setValue(strip->getVolume(), juce::dontSendNotification);
+        volumeSlider.setValue(paramVolume, juce::dontSendNotification);
     if (!modulates(ModernAudioEngine::ModTarget::Pan))
-        panSlider.setValue(strip->getPan(), juce::dontSendNotification);
+        panSlider.setValue(paramPan, juce::dontSendNotification);
     if (!pitchSlider.isMouseButtonDown() && !modulates(ModernAudioEngine::ModTarget::Pitch))
-        pitchSlider.setValue(processor.getPitchSemitonesForDisplay(*strip), juce::dontSendNotification);
-    // Sync play mode dropdown with strip state
-    int modeId = static_cast<int>(strip->getPlayMode()) + 1;
-    if (playModeBox.getSelectedId() != modeId)
-        playModeBox.setSelectedId(modeId, juce::dontSendNotification);
-    
+        pitchSlider.setValue(paramPitch, juce::dontSendNotification);
     // Sync direction mode dropdown with strip state
     int dirModeId = static_cast<int>(strip->getDirectionMode()) + 1;
     if (directionModeBox.getSelectedId() != dirModeId)
@@ -3400,7 +3804,7 @@ void StripControl::updateFromEngine()
 // FXStripControl Implementation
 //==============================================================================
 
-FXStripControl::FXStripControl(int idx, MlrVSTAudioProcessor& p)
+FXStripControl::FXStripControl(int idx, StepVstHostAudioProcessor& p)
     : stripIndex(idx), processor(p)
 {
     // Get strip color
@@ -3550,7 +3954,7 @@ FXStripControl::FXStripControl(int idx, MlrVSTAudioProcessor& p)
     filterAlgoBox.addItem("LAD12", 3);
     filterAlgoBox.addItem("LAD24", 4);
     filterAlgoBox.addItem("MOOG S", 5);
-#if MLRVST_ENABLE_HUOVILAINEN
+#if STEPVSTHOST_ENABLE_HUOVILAINEN
     filterAlgoBox.addItem("MOOG H", 6);
 #else
     filterAlgoBox.addItem("MOOG H*", 6);
@@ -3558,7 +3962,7 @@ FXStripControl::FXStripControl(int idx, MlrVSTAudioProcessor& p)
     filterAlgoBox.setSelectedId(1);
     styleUiCombo(filterAlgoBox);
     filterAlgoBox.setJustificationType(juce::Justification::centred);
-#if MLRVST_ENABLE_HUOVILAINEN
+#if STEPVSTHOST_ENABLE_HUOVILAINEN
     filterAlgoBox.setTooltip("Filter algorithm: SVF12, SVF24, Ladder12, Ladder24, Moog Stilson LP, Moog Huovilainen LP");
 #else
     filterAlgoBox.setTooltip("Filter algorithm: SVF12, SVF24, Ladder12, Ladder24, Moog Stilson LP, Moog H* (Stilson fallback; Huovilainen disabled in this build)");
@@ -3753,7 +4157,7 @@ void StripControl::timerCallback()
     updateFromEngine();
 }
 
-MonomeGridDisplay::MonomeGridDisplay(MlrVSTAudioProcessor& p)
+MonomeGridDisplay::MonomeGridDisplay(StepVstHostAudioProcessor& p)
     : processor(p)
 {
     startTimer(50); // 20fps updates
@@ -3888,50 +4292,9 @@ void MonomeGridDisplay::handleButtonPress(int x, int y, bool down)
     {
         DBG("Button pressed: x=" << x << ", y=" << y);
         
-        // First row (y=0), columns 4-7: Pattern recorders
-        if (y == 0 && x >= 4 && x <= 7)
-        {
-            DBG("  -> Pattern recorder button detected!");
-            int patternIndex = x - 4;  // 0-3 for patterns 0-3
-            
-            auto* engine = processor.getAudioEngine();
-            if (engine)
-            {
-                auto* pattern = engine->getPattern(patternIndex);
-                if (pattern)
-                {
-                    // Cycle through states: off → recording → playing → off
-                    if (pattern->isRecording())
-                    {
-                        // Recording → Playing: Stop recording and start playback
-                        DBG("Pattern " << patternIndex << ": Stop recording, start playback. Events: " << pattern->getEventCount());
-                        const double currentBeat = engine->getTimelineBeat();
-                        pattern->stopRecording();
-                        pattern->startPlayback(currentBeat);
-                    }
-                    else if (pattern->isPlaying())
-                    {
-                        // Playing → Off: Stop playback
-                        DBG("Pattern " << patternIndex << ": Stop playback");
-                        pattern->stopPlayback();
-                    }
-                    else
-                    {
-                        // Off → Recording: Start recording
-                        DBG("Pattern " << patternIndex << ": Start recording");
-                        if (engine)
-                            pattern->startRecording(engine->getTimelineBeat());
-                    }
-                }
-            }
-        }
         // Rows 0-5: Strip triggering (row 0 = strip 0, row 1 = strip 1, etc.)
-        else if (y >= 0 && y < processor.MaxStrips && x < processor.MaxColumns)
+        if (y >= 0 && y < processor.MaxStrips && x < processor.MaxColumns)
         {
-            // Skip pattern recorder buttons on row 0, columns 4-7
-            if (y == 0 && x >= 4 && x <= 7)
-                return;  // Already handled above
-            
             int stripIndex = y;  // Row 0 → strip 0, Row 1 → strip 1, etc.
             
             // Trigger the strip
@@ -3956,7 +4319,6 @@ void MonomeGridDisplay::timerCallback()
 void MonomeGridDisplay::updateFromEngine()
 {
     // Update LED states from strips
-    // Row 0 = Pattern recorder (columns 4-7)
     // Row 1 = Strip 0
     // Row 2 = Strip 1, etc.
     for (int stripIndex = 0; stripIndex < processor.MaxStrips; ++stripIndex)
@@ -3971,7 +4333,7 @@ void MonomeGridDisplay::updateFromEngine()
         {
             // Check if this strip is in Step mode AND control mode is not active
             // When control mode is active (level, pan, sample select, etc.), hide step display
-            bool controlModeActive = (processor.getCurrentControlMode() != MlrVSTAudioProcessor::ControlMode::Normal);
+            bool controlModeActive = (processor.getCurrentControlMode() != StepVstHostAudioProcessor::ControlMode::Normal);
             
             if (strip->playMode == EnhancedAudioStrip::PlayMode::Step && !controlModeActive)
             {
@@ -4030,51 +4392,7 @@ void MonomeGridDisplay::updateFromEngine()
         }
     }
     
-    // Row 0, columns 4-7: Pattern recorder status (only if strip 0 NOT in step mode)
-    if (gridHeight > 0)
-    {
-        auto* engine = processor.getAudioEngine();
-        if (engine)
-        {
-            auto* strip0 = engine->getStrip(0);
-            bool strip0IsStep = (strip0 && strip0->playMode == EnhancedAudioStrip::PlayMode::Step);
-            
-            // Only show pattern recorder if strip 0 is not in step mode
-            if (!strip0IsStep)
-            {
-                for (int x = 4; x <= 7 && x < gridWidth; ++x)
-                {
-                    int patternIndex = x - 4;
-                    auto* pattern = engine->getPattern(patternIndex);
-                    if (pattern)
-                    {
-                        if (pattern->isRecording())
-                        {
-                            // Recording: Bright red (full brightness)
-                            ledState[x][0] = 15;
-                        }
-                        else if (pattern->isPlaying())
-                        {
-                            // Playing: Medium green
-                            ledState[x][0] = 10;
-                        }
-                        else if (pattern->hasEvents())
-                        {
-                            // Has recorded pattern: Dim (ready to play)
-                            ledState[x][0] = 4;
-                        }
-                        else
-                        {
-                            // Empty: Off
-                            ledState[x][0] = 0;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // Hardware LED writes are centralized in MlrVSTAudioProcessor::updateMonomeLEDs().
+    // Hardware LED writes are centralized in StepVstHostAudioProcessor::updateMonomeLEDs().
     // The editor grid is visualization-only.
     repaint();
 }
@@ -4084,7 +4402,7 @@ void MonomeGridDisplay::updateFromEngine()
 // MonomeControlPanel Implementation
 //==============================================================================
 
-MonomeControlPanel::MonomeControlPanel(MlrVSTAudioProcessor& p)
+MonomeControlPanel::MonomeControlPanel(StepVstHostAudioProcessor& p)
     : processor(p)
 {
     // Title - compact
@@ -4224,7 +4542,7 @@ void MonomeControlPanel::updateStatus()
 // GlobalControlPanel Implementation
 //==============================================================================
 
-GlobalControlPanel::GlobalControlPanel(MlrVSTAudioProcessor& p)
+GlobalControlPanel::GlobalControlPanel(StepVstHostAudioProcessor& p)
     : processor(p)
 {
     // Title - compact
@@ -4314,6 +4632,27 @@ GlobalControlPanel::GlobalControlPanel(MlrVSTAudioProcessor& p)
             processor.markPersistentGlobalUserChange();
     };
 
+    beatSpaceMorphLabel.setText("Beat Morph", juce::dontSendNotification);
+    beatSpaceMorphLabel.setJustificationType(juce::Justification::centredLeft);
+    beatSpaceMorphLabel.setTooltip("Smoothing time for monome BeatSpace XY moves.");
+    addAndMakeVisible(beatSpaceMorphLabel);
+
+    beatSpaceMorphSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    beatSpaceMorphSlider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 48, 16);
+    beatSpaceMorphSlider.setRange(40.0, 1200.0, 10.0);
+    beatSpaceMorphSlider.setValue(processor.getBeatSpaceMorphDurationMs(), juce::dontSendNotification);
+    beatSpaceMorphSlider.setNumDecimalPlacesToDisplay(0);
+    beatSpaceMorphSlider.setPopupDisplayEnabled(true, false, this);
+    enableAltClickReset(beatSpaceMorphSlider, 160.0);
+    beatSpaceMorphSlider.setTooltip("0 ms is immediate; higher values morph between BeatSpace table points.");
+    beatSpaceMorphSlider.onValueChange = [this]()
+    {
+        processor.setBeatSpaceMorphDurationMs(beatSpaceMorphSlider.getValue());
+        if (globalUiReady)
+            processor.markPersistentGlobalUserChange();
+    };
+    addAndMakeVisible(beatSpaceMorphSlider);
+
     tooltipsToggle.setButtonText("Tooltips");
     tooltipsToggle.setClickingTogglesState(true);
     tooltipsToggle.setToggleState(false, juce::dontSendNotification);
@@ -4337,6 +4676,9 @@ GlobalControlPanel::GlobalControlPanel(MlrVSTAudioProcessor& p)
     momentaryToggle.setTooltip("Monome page buttons are hold-to-temporary when enabled.");
     addAndMakeVisible(momentaryToggle);
     styleUiButton(momentaryToggle);
+    momentaryToggle.setColour(juce::ToggleButton::textColourId, kAccent.brighter(0.05f));
+    momentaryToggle.setColour(juce::ToggleButton::tickColourId, kAccent);
+    momentaryToggle.setColour(juce::ToggleButton::tickDisabledColourId, kAccent.withAlpha(0.45f));
 
     soundTouchToggle.setButtonText("SoundTouch");
     soundTouchToggle.setClickingTogglesState(true);
@@ -4363,21 +4705,196 @@ GlobalControlPanel::GlobalControlPanel(MlrVSTAudioProcessor& p)
     addAndMakeVisible(hostedShowGuiButton);
     styleUiButton(hostedShowGuiButton);
 
+    hostedMakeDefaultButton.setButtonText("Make Plugin Default");
+    hostedMakeDefaultButton.setTooltip("Store the currently loaded hosted plugin and auto-load it next time.");
+    hostedMakeDefaultButton.onClick = [this]() { makeHostedPluginDefault(); };
+    addAndMakeVisible(hostedMakeDefaultButton);
+    styleUiButton(hostedMakeDefaultButton, true);
+
+    microtonicPresetStripLabel.setText("Strip", juce::dontSendNotification);
+    microtonicPresetStripLabel.setJustificationType(juce::Justification::centredLeft);
+    microtonicPresetStripLabel.setTooltip("Target lane for Microtonic patch-only presets.");
+    addAndMakeVisible(microtonicPresetStripLabel);
+
+    for (int channel = 0; channel < StepVstHostAudioProcessor::BeatSpaceChannels; ++channel)
+        microtonicPresetStripBox.addItem("Lane " + juce::String(channel + 1), channel + 1);
+    microtonicPresetStripBox.setSelectedId(1, juce::dontSendNotification);
+    microtonicPresetStripBox.onChange = [this]() { rebuildMicrotonicPresetList(); };
+    microtonicPresetStripBox.setTooltip("Select the strip whose Microtonic patch preset list is shown.");
+    styleUiCombo(microtonicPresetStripBox);
+    addAndMakeVisible(microtonicPresetStripBox);
+
+    microtonicPresetListLabel.setText("Patch Presets", juce::dontSendNotification);
+    microtonicPresetListLabel.setJustificationType(juce::Justification::centredLeft);
+    microtonicPresetListLabel.setTooltip("Stored Microtonic patch snapshots (pattern is excluded).");
+    addAndMakeVisible(microtonicPresetListLabel);
+
+    microtonicPresetListBox.setTooltip("Recall or overwrite patch-only snapshots for this strip.");
+    styleUiCombo(microtonicPresetListBox);
+    addAndMakeVisible(microtonicPresetListBox);
+
+    microtonicPresetStoreButton.setButtonText("Store Patch");
+    microtonicPresetStoreButton.setTooltip("Store current Microtonic patch state for the selected strip.");
+    microtonicPresetStoreButton.onClick = [this]()
+    {
+        const int strip = juce::jlimit(
+            0,
+            StepVstHostAudioProcessor::BeatSpaceChannels - 1,
+            microtonicPresetStripBox.getSelectedId() - 1);
+        const int selectedId = microtonicPresetListBox.getSelectedId();
+        int preferredSlot = -1;
+        if (selectedId >= 1 && selectedId <= StepVstHostAudioProcessor::MicrotonicStripPresetSlots)
+            preferredSlot = selectedId - 1;
+        else if (selectedId >= 1000
+                 && selectedId < (1000 + StepVstHostAudioProcessor::MicrotonicStripPresetSlots))
+            preferredSlot = selectedId - 1000;
+
+        int storedSlot = -1;
+        juce::String error;
+        if (!processor.storeCurrentMicrotonicStripPreset(strip, preferredSlot, {}, &storedSlot, &error))
+        {
+            hostedStatusLabel.setText(
+                "Patch store failed: " + (error.isNotEmpty() ? error : juce::String("Unknown error")),
+                juce::dontSendNotification);
+            return;
+        }
+
+        rebuildMicrotonicPresetList();
+        if (storedSlot >= 0)
+            microtonicPresetListBox.setSelectedId(storedSlot + 1, juce::dontSendNotification);
+        hostedStatusLabel.setText(
+            "Stored patch for lane " + juce::String(strip + 1) + " slot "
+                + juce::String(storedSlot + 1).paddedLeft('0', 2),
+            juce::dontSendNotification);
+        if (globalUiReady)
+            processor.markPersistentGlobalUserChange();
+    };
+    styleUiButton(microtonicPresetStoreButton, true);
+    addAndMakeVisible(microtonicPresetStoreButton);
+
+    microtonicPresetRecallButton.setButtonText("Recall Patch");
+    microtonicPresetRecallButton.setTooltip("Recall stored Microtonic patch state for this strip.");
+    microtonicPresetRecallButton.onClick = [this]()
+    {
+        const int strip = juce::jlimit(
+            0,
+            StepVstHostAudioProcessor::BeatSpaceChannels - 1,
+            microtonicPresetStripBox.getSelectedId() - 1);
+        const int selectedId = microtonicPresetListBox.getSelectedId();
+        if (selectedId < 1 || selectedId > StepVstHostAudioProcessor::MicrotonicStripPresetSlots)
+            return;
+
+        juce::String error;
+        if (!processor.recallMicrotonicStripPreset(strip, selectedId - 1, &error))
+        {
+            hostedStatusLabel.setText(
+                "Patch recall failed: " + (error.isNotEmpty() ? error : juce::String("Unknown error")),
+                juce::dontSendNotification);
+            return;
+        }
+
+        hostedStatusLabel.setText(
+            "Recalled patch for lane " + juce::String(strip + 1) + " slot "
+                + juce::String(selectedId).paddedLeft('0', 2),
+            juce::dontSendNotification);
+    };
+    styleUiButton(microtonicPresetRecallButton);
+    addAndMakeVisible(microtonicPresetRecallButton);
+
+    microtonicPresetDeleteButton.setButtonText("Delete");
+    microtonicPresetDeleteButton.setTooltip("Delete selected patch preset from this strip.");
+    microtonicPresetDeleteButton.onClick = [this]()
+    {
+        const int strip = juce::jlimit(
+            0,
+            StepVstHostAudioProcessor::BeatSpaceChannels - 1,
+            microtonicPresetStripBox.getSelectedId() - 1);
+        const int selectedId = microtonicPresetListBox.getSelectedId();
+        if (selectedId < 1 || selectedId > StepVstHostAudioProcessor::MicrotonicStripPresetSlots)
+            return;
+
+        if (!processor.deleteMicrotonicStripPreset(strip, selectedId - 1))
+            return;
+
+        rebuildMicrotonicPresetList();
+        hostedStatusLabel.setText(
+            "Deleted patch in lane " + juce::String(strip + 1) + " slot "
+                + juce::String(selectedId).paddedLeft('0', 2),
+            juce::dontSendNotification);
+        if (globalUiReady)
+            processor.markPersistentGlobalUserChange();
+    };
+    styleUiButton(microtonicPresetDeleteButton);
+    addAndMakeVisible(microtonicPresetDeleteButton);
+
     hostedStatusLabel.setText("Host: no instrument loaded", juce::dontSendNotification);
     hostedStatusLabel.setFont(juce::Font(juce::FontOptions(9.0f)));
     hostedStatusLabel.setJustificationType(juce::Justification::centredLeft);
     hostedStatusLabel.setColour(juce::Label::textColourId, kTextMuted);
     hostedStatusLabel.setTooltip("Status of the hosted instrument plugin.");
     addAndMakeVisible(hostedStatusLabel);
+
+    beatSpacePreviewLabel.setText("BeatSpace", juce::dontSendNotification);
+    beatSpacePreviewLabel.setJustificationType(juce::Justification::centredLeft);
+    beatSpacePreviewLabel.setColour(juce::Label::textColourId, kTextSecondary);
+    beatSpacePreviewLabel.setFont(juce::Font(juce::FontOptions(10.0f)));
+    beatSpacePreviewLabel.setTooltip("BeatSpace cursor preview from monome page.");
+    addAndMakeVisible(beatSpacePreviewLabel);
+
+    for (int channel = 0; channel < StepVstHostAudioProcessor::BeatSpaceChannels; ++channel)
+    {
+        auto& button = beatSpacePathButtons[static_cast<size_t>(channel)];
+        button.setButtonText("P" + juce::String(channel + 1));
+        button.setClickingTogglesState(true);
+        button.setTooltip(
+            "Arm BeatSpace path record for channel " + juce::String(channel + 1)
+            + ". Then click-drag on the BeatSpace display to draw.\n"
+            + "Right-click clears this channel path.");
+        button.onClick = [this, channel]()
+        {
+            const bool armed = beatSpacePathButtons[static_cast<size_t>(channel)].getToggleState();
+            processor.setBeatSpacePathRecordArmedChannel(armed ? channel : -1);
+            refreshFromProcessor();
+            if (!beatSpacePreviewBounds.isEmpty())
+                repaint(beatSpacePreviewBounds.expanded(2));
+        };
+        button.addMouseListener(this, false);
+        styleUiButton(button);
+        addAndMakeVisible(button);
+    }
     
     updateHostedPluginStatus();
+    rebuildMicrotonicPresetList();
     refreshFromProcessor();
     globalUiReady = true;
+    startTimerHz(30);
 }
 
 GlobalControlPanel::~GlobalControlPanel()
 {
+    stopTimer();
     closeHostedPluginEditor();
+}
+
+void GlobalControlPanel::timerCallback()
+{
+    if (beatSpacePreviewBounds.isEmpty() || !isShowing())
+        return;
+
+    const auto state = processor.getBeatSpaceVisualState();
+    bool anyPathActive = false;
+    for (const bool active : state.pathActive)
+    {
+        if (active)
+        {
+            anyPathActive = true;
+            break;
+        }
+    }
+
+    // Keep BeatSpace playback/morph visuals live even when no mouse interaction occurs.
+    if (state.anyMorphActive || anyPathActive || beatSpacePathRecordingActive)
+        repaint(beatSpacePreviewBounds.expanded(2));
 }
 
 void GlobalControlPanel::loadHostedPlugin()
@@ -4390,13 +4907,17 @@ void GlobalControlPanel::loadHostedPlugin()
     }
     else
     {
+        const auto defaultHostedFile = processor.getDefaultHostedInstrumentFile();
+        if (defaultHostedFile != juce::File())
+            startDir = defaultHostedFile;
+
         const juce::File systemVst3("/Library/Audio/Plug-Ins/VST3");
         const juce::File systemAu("/Library/Audio/Plug-Ins/Components");
-        if (systemVst3.exists() && systemVst3.isDirectory())
+        if (startDir == juce::File() && systemVst3.exists() && systemVst3.isDirectory())
             startDir = systemVst3;
-        else if (systemAu.exists() && systemAu.isDirectory())
+        else if (startDir == juce::File() && systemAu.exists() && systemAu.isDirectory())
             startDir = systemAu;
-        else
+        else if (startDir == juce::File())
             startDir = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
     }
 
@@ -4474,6 +4995,26 @@ void GlobalControlPanel::openHostedPluginEditor()
     hostedStatusLabel.setText("Host GUI unavailable: " + instance->getName(), juce::dontSendNotification);
 }
 
+void GlobalControlPanel::makeHostedPluginDefault()
+{
+    juce::String error;
+    if (!processor.setLoadedHostedInstrumentAsDefault(error))
+    {
+        if (error.isEmpty())
+            error = "No hosted plugin loaded";
+        hostedStatusLabel.setText("Host default failed: " + error, juce::dontSendNotification);
+        return;
+    }
+
+    const auto file = processor.getDefaultHostedInstrumentFile();
+    if (file != juce::File())
+        hostedLastPluginFile = file;
+
+    auto* instance = processor.getHostRack().getInstance();
+    const juce::String pluginName = (instance != nullptr) ? instance->getName() : file.getFileName();
+    hostedStatusLabel.setText("Host default set: " + pluginName, juce::dontSendNotification);
+}
+
 void GlobalControlPanel::closeHostedPluginEditor()
 {
     if (hostedEditorWindow == nullptr)
@@ -4489,22 +5030,85 @@ void GlobalControlPanel::updateHostedPluginStatus()
     if (instance == nullptr)
     {
         hostedShowGuiButton.setEnabled(false);
+        hostedMakeDefaultButton.setEnabled(false);
         hostedStatusLabel.setText("Host: no instrument loaded", juce::dontSendNotification);
         return;
     }
 
+    const auto loadedFile = processor.getLoadedHostedInstrumentFile();
+    if (loadedFile != juce::File())
+        hostedLastPluginFile = loadedFile;
+
     hostedShowGuiButton.setEnabled(instance->hasEditor());
+    hostedMakeDefaultButton.setEnabled(true);
     if (instance->hasEditor())
         hostedStatusLabel.setText("Host loaded: " + instance->getName(), juce::dontSendNotification);
     else
         hostedStatusLabel.setText("Host loaded (no GUI): " + instance->getName(), juce::dontSendNotification);
 }
 
+void GlobalControlPanel::rebuildMicrotonicPresetList()
+{
+    const int strip = juce::jlimit(
+        0,
+        StepVstHostAudioProcessor::BeatSpaceChannels - 1,
+        microtonicPresetStripBox.getSelectedId() - 1);
+
+    const int selectedBefore = microtonicPresetListBox.getSelectedId();
+    microtonicPresetListBox.clear(juce::dontSendNotification);
+
+    std::array<bool, StepVstHostAudioProcessor::MicrotonicStripPresetSlots> used{};
+    used.fill(false);
+    const auto slots = processor.getMicrotonicStripPresetSlots(strip);
+    for (const int slot : slots)
+    {
+        const int clampedSlot = juce::jlimit(0, StepVstHostAudioProcessor::MicrotonicStripPresetSlots - 1, slot);
+        used[static_cast<size_t>(clampedSlot)] = true;
+        const auto label = processor.getMicrotonicStripPresetName(strip, clampedSlot).trim();
+        const auto itemText = juce::String(clampedSlot + 1).paddedLeft('0', 2) + "  "
+            + (label.isNotEmpty() ? label : ("Patch " + juce::String(clampedSlot + 1).paddedLeft('0', 2)));
+        microtonicPresetListBox.addItem(itemText, clampedSlot + 1);
+    }
+
+    int firstFreeSlot = -1;
+    for (int slot = 0; slot < StepVstHostAudioProcessor::MicrotonicStripPresetSlots; ++slot)
+    {
+        if (!used[static_cast<size_t>(slot)])
+        {
+            firstFreeSlot = slot;
+            break;
+        }
+    }
+    if (firstFreeSlot >= 0)
+    {
+        microtonicPresetListBox.addItem(
+            "New Slot " + juce::String(firstFreeSlot + 1).paddedLeft('0', 2),
+            1000 + firstFreeSlot);
+    }
+
+    int nextSelected = selectedBefore;
+    if (microtonicPresetListBox.indexOfItemId(nextSelected) < 0)
+    {
+        nextSelected = (slots.empty() && firstFreeSlot >= 0)
+            ? (1000 + firstFreeSlot)
+            : (slots.empty() ? 0 : (slots.front() + 1));
+    }
+    if (nextSelected != 0 && microtonicPresetListBox.indexOfItemId(nextSelected) >= 0)
+        microtonicPresetListBox.setSelectedId(nextSelected, juce::dontSendNotification);
+
+    const int selectedId = microtonicPresetListBox.getSelectedId();
+    const bool hasStoredSelection = (selectedId >= 1
+        && selectedId <= StepVstHostAudioProcessor::MicrotonicStripPresetSlots);
+    microtonicPresetRecallButton.setEnabled(hasStoredSelection);
+    microtonicPresetDeleteButton.setEnabled(hasStoredSelection);
+    microtonicPresetStoreButton.setEnabled(true);
+}
+
 //==============================================================================
 // PresetControlPanel Implementation
 //==============================================================================
 
-PresetControlPanel::PresetControlPanel(MlrVSTAudioProcessor& p)
+PresetControlPanel::PresetControlPanel(StepVstHostAudioProcessor& p)
     : processor(p)
 {
     instructionsLabel.setText("Click=load default/preset  Shift+Click=save  Right-click=delete", juce::dontSendNotification);
@@ -4564,10 +5168,10 @@ PresetControlPanel::PresetControlPanel(MlrVSTAudioProcessor& p)
     addAndMakeVisible(presetViewport);
 
     // 16x7 preset grid, origin 0x0
-    for (int i = 0; i < MlrVSTAudioProcessor::MaxPresetSlots; ++i)
+    for (int i = 0; i < StepVstHostAudioProcessor::MaxPresetSlots; ++i)
     {
-        const int x = i % MlrVSTAudioProcessor::PresetColumns;
-        const int y = i / MlrVSTAudioProcessor::PresetColumns;
+        const int x = i % StepVstHostAudioProcessor::PresetColumns;
+        const int y = i / StepVstHostAudioProcessor::PresetColumns;
         auto& button = presetButtons[static_cast<size_t>(i)];
         button.setButtonText(juce::String(x) + "," + juce::String(y));
         button.setClickingTogglesState(false);
@@ -4636,7 +5240,7 @@ void PresetControlPanel::mouseUp(const juce::MouseEvent& e)
     if (!e.mods.isRightButtonDown())
         return;
 
-    for (int i = 0; i < MlrVSTAudioProcessor::MaxPresetSlots; ++i)
+    for (int i = 0; i < StepVstHostAudioProcessor::MaxPresetSlots; ++i)
     {
         auto& button = presetButtons[static_cast<size_t>(i)];
         if (e.originalComponent == &button || e.eventComponent == &button)
@@ -4699,7 +5303,7 @@ void PresetControlPanel::exportRecordingsAsWav()
     int failedCount = 0;
     juce::WavAudioFormat wavFormat;
 
-    for (int i = 0; i < MlrVSTAudioProcessor::MaxStrips; ++i)
+    for (int i = 0; i < StepVstHostAudioProcessor::MaxStrips; ++i)
     {
         auto* strip = engine->getStrip(i);
         if (strip == nullptr || !strip->hasAudio())
@@ -4765,7 +5369,7 @@ void PresetControlPanel::updatePresetButtons()
         return compact.toUpperCase();
     };
 
-    for (int i = 0; i < MlrVSTAudioProcessor::MaxPresetSlots; ++i)
+    for (int i = 0; i < StepVstHostAudioProcessor::MaxPresetSlots; ++i)
     {
         bool exists = processor.presetExists(i);
         auto& button = presetButtons[static_cast<size_t>(i)];
@@ -4801,19 +5405,19 @@ void PresetControlPanel::layoutPresetButtons()
 
     const int viewportWidth = juce::jmax(0, presetViewport.getWidth() - presetViewport.getScrollBarThickness());
     const int buttonWidth = juce::jmax(minButtonWidth,
-                                       (viewportWidth - ((MlrVSTAudioProcessor::PresetColumns - 1) * gap))
-                                       / MlrVSTAudioProcessor::PresetColumns);
-    const int contentWidth = (MlrVSTAudioProcessor::PresetColumns * buttonWidth)
-                             + ((MlrVSTAudioProcessor::PresetColumns - 1) * gap);
-    const int contentHeight = (MlrVSTAudioProcessor::PresetRows * buttonHeight)
-                              + ((MlrVSTAudioProcessor::PresetRows - 1) * gap);
+                                       (viewportWidth - ((StepVstHostAudioProcessor::PresetColumns - 1) * gap))
+                                       / StepVstHostAudioProcessor::PresetColumns);
+    const int contentWidth = (StepVstHostAudioProcessor::PresetColumns * buttonWidth)
+                             + ((StepVstHostAudioProcessor::PresetColumns - 1) * gap);
+    const int contentHeight = (StepVstHostAudioProcessor::PresetRows * buttonHeight)
+                              + ((StepVstHostAudioProcessor::PresetRows - 1) * gap);
 
     presetGridContent.setSize(contentWidth, contentHeight);
 
-    for (int i = 0; i < MlrVSTAudioProcessor::MaxPresetSlots; ++i)
+    for (int i = 0; i < StepVstHostAudioProcessor::MaxPresetSlots; ++i)
     {
-        const int x = i % MlrVSTAudioProcessor::PresetColumns;
-        const int y = i / MlrVSTAudioProcessor::PresetColumns;
+        const int x = i % StepVstHostAudioProcessor::PresetColumns;
+        const int y = i / StepVstHostAudioProcessor::PresetColumns;
         presetButtons[static_cast<size_t>(i)].setBounds(x * (buttonWidth + gap),
                                                         y * (buttonHeight + gap),
                                                         buttonWidth,
@@ -4838,7 +5442,7 @@ void PresetControlPanel::refreshVisualState()
 // PathsControlPanel Implementation
 //==============================================================================
 
-PathsControlPanel::PathsControlPanel(MlrVSTAudioProcessor& p)
+PathsControlPanel::PathsControlPanel(StepVstHostAudioProcessor& p)
     : processor(p)
 {
     titleLabel.setText("DEFAULT LOAD PATHS", juce::dontSendNotification);
@@ -4866,7 +5470,7 @@ PathsControlPanel::PathsControlPanel(MlrVSTAudioProcessor& p)
     headerStepLabel.setJustificationType(juce::Justification::centredLeft);
     scrollContent.addAndMakeVisible(headerStepLabel);
 
-    for (int i = 0; i < MlrVSTAudioProcessor::MaxStrips; ++i)
+    for (int i = 0; i < StepVstHostAudioProcessor::MaxStrips; ++i)
     {
         auto& row = rows[static_cast<size_t>(i)];
 
@@ -4881,12 +5485,12 @@ PathsControlPanel::PathsControlPanel(MlrVSTAudioProcessor& p)
 
         row.loopSetButton.setButtonText("Set");
         row.loopSetButton.setTooltip("Set default loop-mode sample folder.");
-        row.loopSetButton.onClick = [this, i]() { chooseDirectory(i, MlrVSTAudioProcessor::SamplePathMode::Loop); };
+        row.loopSetButton.onClick = [this, i]() { chooseDirectory(i, StepVstHostAudioProcessor::SamplePathMode::Loop); };
         scrollContent.addAndMakeVisible(row.loopSetButton);
 
         row.loopClearButton.setButtonText("Clear");
         row.loopClearButton.setTooltip("Clear default loop-mode folder.");
-        row.loopClearButton.onClick = [this, i]() { clearDirectory(i, MlrVSTAudioProcessor::SamplePathMode::Loop); };
+        row.loopClearButton.onClick = [this, i]() { clearDirectory(i, StepVstHostAudioProcessor::SamplePathMode::Loop); };
         scrollContent.addAndMakeVisible(row.loopClearButton);
 
         row.stepPathLabel.setColour(juce::Label::textColourId, kTextPrimary);
@@ -4895,12 +5499,12 @@ PathsControlPanel::PathsControlPanel(MlrVSTAudioProcessor& p)
 
         row.stepSetButton.setButtonText("Set");
         row.stepSetButton.setTooltip("Set default step-mode sample folder.");
-        row.stepSetButton.onClick = [this, i]() { chooseDirectory(i, MlrVSTAudioProcessor::SamplePathMode::Step); };
+        row.stepSetButton.onClick = [this, i]() { chooseDirectory(i, StepVstHostAudioProcessor::SamplePathMode::Step); };
         scrollContent.addAndMakeVisible(row.stepSetButton);
 
         row.stepClearButton.setButtonText("Clear");
         row.stepClearButton.setTooltip("Clear default step-mode folder.");
-        row.stepClearButton.onClick = [this, i]() { clearDirectory(i, MlrVSTAudioProcessor::SamplePathMode::Step); };
+        row.stepClearButton.onClick = [this, i]() { clearDirectory(i, StepVstHostAudioProcessor::SamplePathMode::Step); };
         scrollContent.addAndMakeVisible(row.stepClearButton);
     }
 
@@ -4922,7 +5526,7 @@ void PathsControlPanel::resized()
     scrollViewport.setBounds(bounds);
 
     const int rowHeight = 24;
-    const int contentHeight = 18 + 4 + (rowHeight * MlrVSTAudioProcessor::MaxStrips);
+    const int contentHeight = 18 + 4 + (rowHeight * StepVstHostAudioProcessor::MaxStrips);
     const int contentWidth = juce::jmax(200, scrollViewport.getWidth() - scrollViewport.getScrollBarThickness());
     scrollContent.setSize(contentWidth, contentHeight);
 
@@ -4942,7 +5546,7 @@ void PathsControlPanel::resized()
 
     layout.removeFromTop(4);
 
-    for (int i = 0; i < MlrVSTAudioProcessor::MaxStrips; ++i)
+    for (int i = 0; i < StepVstHostAudioProcessor::MaxStrips; ++i)
     {
         auto& row = rows[static_cast<size_t>(i)];
         auto rowArea = layout.removeFromTop(rowHeight);
@@ -4973,11 +5577,11 @@ void PathsControlPanel::timerCallback()
 
 void PathsControlPanel::refreshLabels()
 {
-    for (int i = 0; i < MlrVSTAudioProcessor::MaxStrips; ++i)
+    for (int i = 0; i < StepVstHostAudioProcessor::MaxStrips; ++i)
     {
         const auto idx = static_cast<size_t>(i);
-        const auto loopDir = processor.getDefaultSampleDirectory(i, MlrVSTAudioProcessor::SamplePathMode::Loop);
-        const auto stepDir = processor.getDefaultSampleDirectory(i, MlrVSTAudioProcessor::SamplePathMode::Step);
+        const auto loopDir = processor.getDefaultSampleDirectory(i, StepVstHostAudioProcessor::SamplePathMode::Loop);
+        const auto stepDir = processor.getDefaultSampleDirectory(i, StepVstHostAudioProcessor::SamplePathMode::Step);
 
         rows[idx].loopPathLabel.setText(pathToDisplay(loopDir), juce::dontSendNotification);
         rows[idx].loopPathLabel.setTooltip(loopDir.getFullPathName());
@@ -4986,13 +5590,13 @@ void PathsControlPanel::refreshLabels()
     }
 }
 
-void PathsControlPanel::chooseDirectory(int stripIndex, MlrVSTAudioProcessor::SamplePathMode mode)
+void PathsControlPanel::chooseDirectory(int stripIndex, StepVstHostAudioProcessor::SamplePathMode mode)
 {
     auto startDir = processor.getDefaultSampleDirectory(stripIndex, mode);
     if (!startDir.exists() || !startDir.isDirectory())
         startDir = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
 
-    const juce::String modeName = (mode == MlrVSTAudioProcessor::SamplePathMode::Step) ? "Step" : "Loop";
+    const juce::String modeName = (mode == StepVstHostAudioProcessor::SamplePathMode::Step) ? "Step" : "Loop";
     juce::FileChooser chooser("Select " + modeName + " Default Path for Strip " + juce::String(stripIndex + 1),
                               startDir,
                               "*");
@@ -5004,7 +5608,7 @@ void PathsControlPanel::chooseDirectory(int stripIndex, MlrVSTAudioProcessor::Sa
     }
 }
 
-void PathsControlPanel::clearDirectory(int stripIndex, MlrVSTAudioProcessor::SamplePathMode mode)
+void PathsControlPanel::clearDirectory(int stripIndex, StepVstHostAudioProcessor::SamplePathMode mode)
 {
     processor.setDefaultSampleDirectory(stripIndex, mode, {});
     refreshLabels();
@@ -5020,6 +5624,904 @@ juce::String PathsControlPanel::pathToDisplay(const juce::File& file)
 void GlobalControlPanel::paint(juce::Graphics& g)
 {
     drawPanel(g, getLocalBounds().toFloat(), kAccent, 8.0f);
+
+    if (beatSpacePreviewBounds.isEmpty())
+        return;
+
+    const auto state = processor.getBeatSpaceVisualState();
+    auto area = beatSpacePreviewBounds.toFloat();
+    g.setColour(juce::Colour(0xffd6e4f2));
+    g.fillRoundedRectangle(area, 4.5f);
+    g.setColour(juce::Colour(0xff8ca3bc));
+    g.drawRoundedRectangle(area, 4.5f, 1.2f);
+
+    auto innerBounds = beatSpacePreviewBounds.reduced(3);
+    auto inner = innerBounds.toFloat();
+    const auto previewImage = processor.getBeatSpaceTablePreviewImage();
+    const int tableSize = juce::jmax(1, state.tableSize);
+    const int viewX = juce::jlimit(0, tableSize - 1, state.viewX);
+    const int viewY = juce::jlimit(0, tableSize - 1, state.viewY);
+    const int viewW = juce::jmax(1, juce::jmin(tableSize - viewX, state.viewWidth));
+    const int viewH = juce::jmax(1, juce::jmin(tableSize - viewY, state.viewHeight));
+    const float scaleX = inner.getWidth() / static_cast<float>(viewW);
+    const float scaleY = inner.getHeight() / static_cast<float>(viewH);
+
+    if (previewImage.isValid())
+    {
+        const bool drawPerCell = (viewW <= 18 || viewH <= 18);
+        if (drawPerCell)
+        {
+            const float cellW = inner.getWidth() / static_cast<float>(viewW);
+            const float cellH = inner.getHeight() / static_cast<float>(viewH);
+            for (int yy = 0; yy < viewH; ++yy)
+            {
+                for (int xx = 0; xx < viewW; ++xx)
+                {
+                    const auto c = previewImage.getPixelAt(viewX + xx, viewY + yy);
+                    const float px = inner.getX() + (static_cast<float>(xx) * cellW);
+                    const float py = inner.getY() + (static_cast<float>(yy) * cellH);
+                    g.setColour(c);
+                    g.fillRect(px, py, juce::jmax(1.0f, cellW + 0.45f), juce::jmax(1.0f, cellH + 0.45f));
+                }
+            }
+        }
+        else
+        {
+            g.setImageResamplingQuality(juce::Graphics::highResamplingQuality);
+            g.drawImage(
+                previewImage,
+                innerBounds.getX(),
+                innerBounds.getY(),
+                innerBounds.getWidth(),
+                innerBounds.getHeight(),
+                viewX,
+                viewY,
+                viewW,
+                viewH);
+        }
+
+        if (state.confidenceOverlayEnabled)
+        {
+            const auto confidenceImage = processor.getBeatSpaceConfidencePreviewImage();
+            if (confidenceImage.isValid())
+            {
+                if (drawPerCell)
+                {
+                    const float cellW = inner.getWidth() / static_cast<float>(viewW);
+                    const float cellH = inner.getHeight() / static_cast<float>(viewH);
+                    for (int yy = 0; yy < viewH; ++yy)
+                    {
+                        for (int xx = 0; xx < viewW; ++xx)
+                        {
+                            const auto c = confidenceImage.getPixelAt(viewX + xx, viewY + yy);
+                            const float alpha = 0.22f * static_cast<float>(c.getRed()) / 255.0f;
+                            if (alpha <= 0.001f)
+                                continue;
+                            const float px = inner.getX() + (static_cast<float>(xx) * cellW);
+                            const float py = inner.getY() + (static_cast<float>(yy) * cellH);
+                            g.setColour(juce::Colours::white.withAlpha(alpha));
+                            g.fillRect(px, py, juce::jmax(1.0f, cellW + 0.45f), juce::jmax(1.0f, cellH + 0.45f));
+                        }
+                    }
+                }
+                else
+                {
+                    g.setOpacity(0.28f);
+                    g.drawImage(
+                        confidenceImage,
+                        innerBounds.getX(),
+                        innerBounds.getY(),
+                        innerBounds.getWidth(),
+                        innerBounds.getHeight(),
+                        viewX,
+                        viewY,
+                        viewW,
+                        viewH);
+                    g.setOpacity(1.0f);
+                }
+            }
+        }
+
+        juce::ColourGradient vignette(
+            juce::Colour(0x00000000), inner.getCentreX(), inner.getCentreY(),
+            juce::Colour(0x2a0c1a2a), inner.getX(), inner.getY(), true);
+        g.setGradientFill(vignette);
+        g.fillRect(inner);
+    }
+    else
+    {
+        g.setColour(juce::Colour(0xfff6f9fc));
+        g.fillRect(inner);
+    }
+    g.setColour(juce::Colour(0xffc2d2e2).withAlpha(0.92f));
+    g.drawRect(inner, 1.0f);
+
+    if (!state.decoderReady)
+    {
+        g.setColour(kTextMuted);
+        g.drawFittedText("decoder missing", beatSpacePreviewBounds, juce::Justification::centred, 1);
+        return;
+    }
+
+    constexpr std::array<uint32_t, StepVstHostAudioProcessor::BeatSpaceChannels> kCategoryColors {
+        0xffea5455u, // Kick
+        0xfff07f3au, // Snare
+        0xff6bcf80u, // Closed hat
+        0xff4db6b8u, // Open hat
+        0xff5f8fd3u, // Perc
+        0xff9f7ccbu  // Misc
+    };
+    constexpr std::array<const char*, StepVstHostAudioProcessor::BeatSpaceChannels> kCategoryShortNames {
+        "KICK", "SNARE", "C-HAT", "O-HAT", "PERC", "MISC"
+    };
+    constexpr std::array<const char*, StepVstHostAudioProcessor::BeatSpaceChannels> kCategoryChipNames {
+        "K", "S", "CH", "OH", "PC", "MX"
+    };
+    constexpr std::array<const char*, StepVstHostAudioProcessor::BeatSpaceChannels> kCategoryLongNames {
+        "Kick", "Snare", "Closed Hat", "Open Hat", "Percussion", "Misc"
+    };
+    const bool showTextOverlay = beatSpaceTextOverlayEnabled;
+
+    // Grid guides help read cluster locations and zoom context.
+    const int coarseStep = (viewW <= 16 || viewH <= 16) ? 2 : ((viewW <= 32 || viewH <= 32) ? 4 : 8);
+    if (coarseStep > 0)
+    {
+        for (int gx = 0; gx <= viewW; gx += coarseStep)
+        {
+            const float px = inner.getX() + (static_cast<float>(gx) * scaleX);
+            g.setColour(juce::Colour(0xfff5fbff).withAlpha((gx % (coarseStep * 2) == 0) ? 0.16f : 0.08f));
+            g.drawVerticalLine(static_cast<int>(std::round(px)), inner.getY(), inner.getBottom());
+        }
+        for (int gy = 0; gy <= viewH; gy += coarseStep)
+        {
+            const float py = inner.getY() + (static_cast<float>(gy) * scaleY);
+            g.setColour(juce::Colour(0xfff5fbff).withAlpha((gy % (coarseStep * 2) == 0) ? 0.16f : 0.08f));
+            g.drawHorizontalLine(static_cast<int>(std::round(py)), inner.getX(), inner.getRight());
+        }
+    }
+
+    auto drawCategoryRegion = [&](int category)
+    {
+        const auto anchor = state.categoryAnchors[static_cast<size_t>(category)];
+        const int radiusX = juce::jmax(1, state.categoryRadiusX[static_cast<size_t>(category)]);
+        const int radiusY = juce::jmax(1, state.categoryRadiusY[static_cast<size_t>(category)]);
+        const int relAnchorX = anchor.x - viewX;
+        const int relAnchorY = anchor.y - viewY;
+        if (relAnchorX < -radiusX || relAnchorX >= (viewW + radiusX)
+            || relAnchorY < -radiusY || relAnchorY >= (viewH + radiusY))
+            return;
+
+        const bool manual = state.categoryManual[static_cast<size_t>(category)];
+        const auto colour = juce::Colour(kCategoryColors[static_cast<size_t>(category)]);
+        const float centerX = inner.getX() + ((static_cast<float>(relAnchorX) + 0.5f) * scaleX);
+        const float centerY = inner.getY() + ((static_cast<float>(relAnchorY) + 0.5f) * scaleY);
+        const float regionRadiusX = juce::jmax(5.0f, (static_cast<float>(radiusX) + 0.6f) * scaleX);
+        const float regionRadiusY = juce::jmax(5.0f, (static_cast<float>(radiusY) + 0.6f) * scaleY);
+        const auto ellipseBounds = juce::Rectangle<float>(
+            centerX - regionRadiusX,
+            centerY - regionRadiusY,
+            regionRadiusX * 2.0f,
+            regionRadiusY * 2.0f);
+
+        if (!ellipseBounds.intersects(inner))
+            return;
+
+        juce::ColourGradient regionGradient(
+            colour.withAlpha(manual ? 0.30f : 0.18f), centerX, centerY,
+            juce::Colour(0x00000000), centerX + (regionRadiusX * 0.75f), centerY + (regionRadiusY * 0.75f), true);
+        g.saveState();
+        g.reduceClipRegion(innerBounds);
+        g.setGradientFill(regionGradient);
+        g.fillEllipse(ellipseBounds);
+        g.restoreState();
+        g.setColour(colour.withAlpha(manual ? 0.90f : 0.56f));
+        g.drawEllipse(ellipseBounds, manual ? 1.8f : 1.1f);
+
+        if (relAnchorX < 0 || relAnchorX >= viewW || relAnchorY < 0 || relAnchorY >= viewH)
+            return;
+        const float ax = centerX;
+        const float ay = centerY;
+        g.setColour(juce::Colours::white.withAlpha(manual ? 0.95f : 0.78f));
+        g.fillEllipse(ax - 2.8f, ay - 2.8f, 5.6f, 5.6f);
+        g.setColour(colour.withAlpha(manual ? 0.98f : 0.80f));
+        g.fillEllipse(ax - 1.9f, ay - 1.9f, 3.8f, 3.8f);
+
+        if (showTextOverlay)
+        {
+            const juce::String tagText = kCategoryShortNames[static_cast<size_t>(category)];
+            auto tagFont = juce::Font(juce::FontOptions(7.0f, juce::Font::bold));
+            const float tagWidth = juce::jmax(
+                20.0f,
+                8.0f + (5.2f * static_cast<float>(tagText.length())));
+            auto tag = juce::Rectangle<float>(ax + 3.0f, ay - 6.0f, tagWidth, 10.0f)
+                .constrainedWithin(inner.reduced(1.0f));
+            g.setColour(juce::Colour(0xff0f2234).withAlpha(0.62f));
+            g.fillRoundedRectangle(tag, 1.6f);
+            g.setColour(colour.withAlpha(0.92f));
+            g.drawRoundedRectangle(tag, 1.6f, 0.8f);
+            g.setColour(juce::Colour(0xffeef5ff).withAlpha(0.95f));
+            g.setFont(tagFont);
+            g.drawFittedText(tagText,
+                             tag.toNearestInt(),
+                             juce::Justification::centred,
+                             1);
+        }
+    };
+
+    for (int category = 0; category < StepVstHostAudioProcessor::BeatSpaceChannels; ++category)
+        drawCategoryRegion(category);
+
+    if (showTextOverlay)
+    {
+        auto legendArea = inner.reduced(3.0f).removeFromTop(14.0f);
+        legendArea.removeFromLeft(206.0f);
+        if (state.linkAllChannels)
+            legendArea.removeFromRight(62.0f);
+        if (legendArea.getWidth() > 70.0f)
+        {
+            g.setFont(juce::Font(juce::FontOptions(7.0f, juce::Font::bold)));
+            float cursorX = legendArea.getX();
+            for (int category = 0; category < StepVstHostAudioProcessor::BeatSpaceChannels; ++category)
+            {
+                const auto colour = juce::Colour(kCategoryColors[static_cast<size_t>(category)]);
+                const juce::String label = kCategoryLongNames[static_cast<size_t>(category)];
+                const float pillW = juce::jmax(
+                    26.0f,
+                    10.0f + (5.0f * static_cast<float>(label.length())));
+                if ((cursorX + pillW) > legendArea.getRight())
+                    break;
+                auto pill = juce::Rectangle<float>(cursorX, legendArea.getY(), pillW, legendArea.getHeight());
+                g.setColour(juce::Colour(0xff0f2234).withAlpha(0.63f));
+                g.fillRoundedRectangle(pill, 1.8f);
+                g.setColour(colour.withAlpha(0.90f));
+                g.drawRoundedRectangle(pill, 1.8f, 0.9f);
+                g.setColour(juce::Colour(0xffeef5ff).withAlpha(0.96f));
+                g.drawFittedText(label, pill.toNearestInt(), juce::Justification::centred, 1);
+                cursorX += pillW + 2.0f;
+            }
+        }
+    }
+
+    auto channelColour = [&](int channel) -> juce::Colour
+    {
+        const int clampedChannel = juce::jlimit(0, StepVstHostAudioProcessor::BeatSpaceChannels - 1, channel);
+        const int assignment = juce::jlimit(
+            0,
+            StepVstHostAudioProcessor::BeatSpaceChannels - 1,
+            state.channelCategoryAssignment[static_cast<size_t>(clampedChannel)]);
+        return juce::Colour(kCategoryColors[static_cast<size_t>(assignment)]);
+    };
+
+    auto pointToPixel = [&](const juce::Point<int>& p) -> juce::Point<float>
+    {
+        const int relX = juce::jlimit(0, viewW - 1, p.x - viewX);
+        const int relY = juce::jlimit(0, viewH - 1, p.y - viewY);
+        return {
+            inner.getX() + ((static_cast<float>(relX) + 0.5f) * scaleX),
+            inner.getY() + ((static_cast<float>(relY) + 0.5f) * scaleY)
+        };
+    };
+
+    if (state.pathOverlayEnabled)
+    {
+        const bool pulseOn = ((juce::Time::getMillisecondCounter() / 220u) & 1u) == 0u;
+        for (int channel = 0; channel < StepVstHostAudioProcessor::BeatSpaceChannels; ++channel)
+        {
+            const auto idx = static_cast<size_t>(channel);
+            const int pathCount = juce::jlimit(0, StepVstHostAudioProcessor::BeatSpacePathMaxPoints, state.pathPointCounts[idx]);
+            if (pathCount < 2)
+                continue;
+
+            juce::Path overlayPath;
+            for (int p = 0; p < pathCount; ++p)
+            {
+                const auto pixel = pointToPixel(state.pathPoints[idx][static_cast<size_t>(p)]);
+                if (p == 0)
+                    overlayPath.startNewSubPath(pixel);
+                else
+                    overlayPath.lineTo(pixel);
+            }
+
+            const auto colour = channelColour(channel);
+            const bool selected = (channel == state.selectedChannel);
+            g.setColour(juce::Colours::black.withAlpha(state.pathActive[idx] ? 0.52f : 0.34f));
+            g.strokePath(
+                overlayPath,
+                juce::PathStrokeType(selected ? 7.0f : 5.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+            g.setColour(colour.withAlpha(state.pathActive[idx] ? 0.98f : 0.76f));
+            g.strokePath(
+                overlayPath,
+                juce::PathStrokeType(selected ? 4.2f : 3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+            for (int p = 0; p < pathCount; ++p)
+            {
+                const auto pixel = pointToPixel(state.pathPoints[idx][static_cast<size_t>(p)]);
+                const float radius = (p == 0) ? 2.6f : 1.9f;
+                g.setColour(juce::Colours::white.withAlpha(0.92f));
+                g.fillEllipse(pixel.x - (radius + 0.9f), pixel.y - (radius + 0.9f),
+                              (radius + 0.9f) * 2.0f, (radius + 0.9f) * 2.0f);
+                g.setColour(colour.withAlpha(0.95f));
+                g.fillEllipse(pixel.x - radius, pixel.y - radius, radius * 2.0f, radius * 2.0f);
+            }
+
+            if (state.pathActive[idx])
+            {
+                const auto headPoint = state.channelMorphActive[idx]
+                    ? state.channelMorphCurrent[idx]
+                    : state.channelPoints[idx];
+                const auto headPixel = pointToPixel(headPoint);
+                const float headRadius = selected ? 6.8f : 5.3f;
+                g.setColour(colour.withAlpha(pulseOn ? 0.28f : 0.16f));
+                g.fillEllipse(
+                    headPixel.x - (headRadius + 2.5f),
+                    headPixel.y - (headRadius + 2.5f),
+                    (headRadius + 2.5f) * 2.0f,
+                    (headRadius + 2.5f) * 2.0f);
+                g.setColour(juce::Colours::white.withAlpha(0.96f));
+                g.drawEllipse(
+                    headPixel.x - headRadius,
+                    headPixel.y - headRadius,
+                    headRadius * 2.0f,
+                    headRadius * 2.0f,
+                    selected ? 1.8f : 1.3f);
+                g.setColour(colour.withAlpha(0.95f));
+                g.drawEllipse(
+                    headPixel.x - (headRadius - 1.6f),
+                    headPixel.y - (headRadius - 1.6f),
+                    (headRadius - 1.6f) * 2.0f,
+                    (headRadius - 1.6f) * 2.0f,
+                    selected ? 1.5f : 1.1f);
+            }
+        }
+    }
+
+    auto drawPoint = [&](const juce::Point<int>& p, juce::Colour colour, float radius, bool forceDraw)
+    {
+        const int relX = p.x - viewX;
+        const int relY = p.y - viewY;
+        if (!forceDraw && (relX < 0 || relX >= viewW || relY < 0 || relY >= viewH))
+            return;
+
+        const auto pixel = pointToPixel(p);
+        g.setColour(juce::Colours::white.withAlpha(0.92f));
+        g.fillEllipse(pixel.x - (radius + 1.15f), pixel.y - (radius + 1.15f), (radius + 1.15f) * 2.0f, (radius + 1.15f) * 2.0f);
+        g.setColour(colour);
+        g.fillEllipse(pixel.x - radius, pixel.y - radius, radius * 2.0f, radius * 2.0f);
+    };
+
+    const int selectedChannel = juce::jlimit(
+        0,
+        StepVstHostAudioProcessor::BeatSpaceChannels - 1,
+        state.selectedChannel);
+    const int selectedAssignment = juce::jlimit(
+        0,
+        StepVstHostAudioProcessor::BeatSpaceChannels - 1,
+        state.channelCategoryAssignment[static_cast<size_t>(selectedChannel)]);
+
+    auto visualPointForChannel = [&](int channel) -> juce::Point<int>
+    {
+        const auto idx = static_cast<size_t>(juce::jlimit(
+            0,
+            StepVstHostAudioProcessor::BeatSpaceChannels - 1,
+            channel));
+        return state.channelMorphActive[idx]
+            ? state.channelMorphCurrent[idx]
+            : state.channelPoints[idx];
+    };
+
+    for (int c = 0; c < StepVstHostAudioProcessor::BeatSpaceChannels; ++c)
+    {
+        const auto idx = static_cast<size_t>(c);
+        if (!state.channelMorphActive[idx])
+            continue;
+        const auto from = pointToPixel(state.channelMorphFrom[idx]);
+        const auto to = pointToPixel(state.channelMorphTo[idx]);
+        const auto current = pointToPixel(state.channelMorphCurrent[idx]);
+        const auto colour = channelColour(c);
+        g.setColour(colour.withAlpha(c == selectedChannel ? 0.62f : 0.42f));
+        g.drawLine(from.x, from.y, to.x, to.y, c == selectedChannel ? 1.8f : 1.3f);
+        g.setColour(colour.withAlpha(0.35f));
+        g.fillEllipse(from.x - 1.5f, from.y - 1.5f, 3.0f, 3.0f);
+        g.setColour(colour.withAlpha(0.30f));
+        g.fillEllipse(to.x - 1.8f, to.y - 1.8f, 3.6f, 3.6f);
+        g.setColour(colour.withAlpha(c == selectedChannel ? 0.95f : 0.80f));
+        g.fillEllipse(current.x - 2.0f, current.y - 2.0f, 4.0f, 4.0f);
+    }
+
+    for (int c = 0; c < StepVstHostAudioProcessor::BeatSpaceChannels; ++c)
+    {
+        if (c == selectedChannel)
+            continue;
+        drawPoint(visualPointForChannel(c), channelColour(c).withAlpha(0.86f), 2.15f, false);
+    }
+    const auto selectedPoint = visualPointForChannel(selectedChannel);
+    const auto selectedColour = channelColour(selectedChannel);
+    drawPoint(selectedPoint, selectedColour, 3.1f, true);
+
+    const int selectedRelX = selectedPoint.x - viewX;
+    const int selectedRelY = selectedPoint.y - viewY;
+    if (selectedRelX >= 0 && selectedRelX < viewW && selectedRelY >= 0 && selectedRelY < viewH)
+    {
+        const auto selectedPixel = pointToPixel(selectedPoint);
+        const float sx = selectedPixel.x;
+        const float sy = selectedPixel.y;
+        g.setColour(selectedColour.withAlpha(0.34f));
+        g.drawHorizontalLine(static_cast<int>(std::round(sy)), inner.getX(), inner.getRight());
+        g.drawVerticalLine(static_cast<int>(std::round(sx)), inner.getY(), inner.getBottom());
+    }
+
+    if (showTextOverlay)
+    {
+        auto infoBadge = inner.reduced(3.0f).removeFromTop(14.0f).removeFromLeft(202.0f);
+        g.setColour(juce::Colour(0xff0f2234).withAlpha(0.74f));
+        g.fillRoundedRectangle(infoBadge, 2.2f);
+        g.setColour(selectedColour.withAlpha(0.88f));
+        g.drawRoundedRectangle(infoBadge, 2.2f, 0.9f);
+        g.setColour(juce::Colour(0xffeef5ff).withAlpha(0.95f));
+        g.setFont(juce::Font(juce::FontOptions(8.0f, juce::Font::bold)));
+        g.drawFittedText(
+            "CH " + juce::String(selectedChannel + 1)
+                + " " + juce::String(kCategoryLongNames[static_cast<size_t>(selectedAssignment)])
+                + "  X" + juce::String(selectedPoint.x)
+                + " Y" + juce::String(selectedPoint.y)
+                + "  Z" + juce::String(state.zoomLevel + 1)
+                + "  C" + juce::String(static_cast<int>(std::round(state.selectedConfidence * 100.0f))) + "%"
+                + (state.channelMorphActive[static_cast<size_t>(selectedChannel)]
+                    ? "  M" + juce::String(static_cast<int>(std::round(
+                        state.channelMorphProgress[static_cast<size_t>(selectedChannel)] * 100.0f))) + "%"
+                    : ""),
+            infoBadge.toNearestInt(),
+            juce::Justification::centred,
+            1);
+
+        if (state.pathRecordArmedChannel >= 0)
+        {
+            auto pathBadge = inner.reduced(3.0f).removeFromTop(14.0f).removeFromRight(84.0f);
+            g.setColour(juce::Colour(0xff13324f).withAlpha(0.80f));
+            g.fillRoundedRectangle(pathBadge, 2.2f);
+            g.setColour(kAccent.withAlpha(0.96f));
+            g.drawRoundedRectangle(pathBadge, 2.2f, 1.0f);
+            g.setColour(juce::Colour(0xffeaf4ff));
+            g.setFont(juce::Font(juce::FontOptions(8.0f, juce::Font::bold)));
+            g.drawFittedText(
+                "PATH CH " + juce::String(state.pathRecordArmedChannel + 1),
+                pathBadge.toNearestInt(),
+                juce::Justification::centred,
+                1);
+        }
+    }
+
+    if (state.linkAllChannels)
+    {
+        const auto master = pointToPixel(visualPointForChannel(selectedChannel));
+        for (int i = 0; i < StepVstHostAudioProcessor::BeatSpaceChannels; ++i)
+        {
+            if (i == selectedChannel)
+                continue;
+            const auto p = pointToPixel(visualPointForChannel(i));
+            const auto c = channelColour(i).withAlpha(0.48f);
+            g.setColour(c);
+            g.drawLine(master.x, master.y, p.x, p.y, 1.4f);
+        }
+
+        if (showTextOverlay)
+        {
+            auto badgeArea = inner;
+            auto badge = badgeArea.removeFromTop(14.0f).removeFromRight(58.0f);
+            g.setColour(juce::Colour(0xff0d314f).withAlpha(0.80f));
+            g.fillRoundedRectangle(badge, 2.5f);
+            g.setColour(selectedColour.withAlpha(0.95f));
+            g.drawRoundedRectangle(badge, 2.5f, 1.0f);
+            g.setColour(juce::Colour(0xffeaf4ff));
+            g.setFont(juce::Font(juce::FontOptions(8.6f, juce::Font::bold)));
+            g.drawFittedText("LINK", badge.toNearestInt(), juce::Justification::centred, 1);
+        }
+    }
+
+    // Channel selector chips (clickable) + category initials.
+    auto selectorArea = inner.reduced(4.0f);
+    selectorArea.setY(selectorArea.getBottom() - 16.0f);
+    selectorArea.setHeight(15.0f);
+    g.setColour(juce::Colour(0xff0f2234).withAlpha(0.56f));
+    g.fillRoundedRectangle(selectorArea, 2.5f);
+    g.setColour(juce::Colour(0xffd8e5f5).withAlpha(0.74f));
+    g.drawRoundedRectangle(selectorArea, 2.5f, 0.8f);
+
+    const float chipW = selectorArea.getWidth() / static_cast<float>(StepVstHostAudioProcessor::BeatSpaceChannels);
+    g.setFont(juce::Font(juce::FontOptions(8.4f, juce::Font::bold)));
+    for (int i = 0; i < StepVstHostAudioProcessor::BeatSpaceChannels; ++i)
+    {
+        auto chip = selectorArea.withX(selectorArea.getX() + (chipW * static_cast<float>(i))).withWidth(chipW);
+        const bool isSelected = (i == selectedChannel);
+        const int assignment = juce::jlimit(
+            0,
+            StepVstHostAudioProcessor::BeatSpaceChannels - 1,
+            state.channelCategoryAssignment[static_cast<size_t>(i)]);
+        const auto c = channelColour(i);
+        g.setColour(c.withAlpha(isSelected ? 0.42f : 0.23f));
+        g.fillRoundedRectangle(chip.reduced(1.0f), 1.8f);
+        g.setColour(c.withAlpha(isSelected ? 0.98f : 0.68f));
+        g.drawRoundedRectangle(chip.reduced(1.0f), 1.8f, isSelected ? 1.2f : 0.8f);
+        if (showTextOverlay)
+        {
+            g.setColour(juce::Colour(0xffeef5ff).withAlpha(0.93f));
+            g.drawFittedText(
+                juce::String(i + 1) + ":" + juce::String(kCategoryChipNames[static_cast<size_t>(assignment)]),
+                chip.reduced(2.0f).toNearestInt(),
+                juce::Justification::centred,
+                1);
+        }
+        else
+        {
+            g.setColour(juce::Colours::white.withAlpha(0.88f));
+            g.fillEllipse(chip.getCentreX() - 2.0f, chip.getCentreY() - 2.0f, 4.0f, 4.0f);
+        }
+    }
+
+    // Active viewport is now the main preview; keep a subtle frame to make this explicit.
+    g.setColour(juce::Colour(0xfff5a65b).withAlpha(0.9f));
+    g.drawRect(inner, 1.0f);
+}
+
+void GlobalControlPanel::mouseDown(const juce::MouseEvent& e)
+{
+    beatSpaceDragChannel = -1;
+    beatSpaceDragSingleChannel = false;
+
+    if (beatSpacePreviewBounds.isEmpty())
+        return;
+
+    const auto state = processor.getBeatSpaceVisualState();
+    if (!state.decoderReady)
+        return;
+
+    auto innerBounds = beatSpacePreviewBounds.reduced(3);
+    if (!innerBounds.contains(e.getPosition()))
+        return;
+
+    auto pointFromLocal = [&](juce::Point<int> localPos) -> juce::Point<int>
+    {
+        const int tableSize = juce::jmax(1, state.tableSize);
+        const int viewX = juce::jlimit(0, tableSize - 1, state.viewX);
+        const int viewY = juce::jlimit(0, tableSize - 1, state.viewY);
+        const int viewW = juce::jmax(1, juce::jmin(tableSize - viewX, state.viewWidth));
+        const int viewH = juce::jmax(1, juce::jmin(tableSize - viewY, state.viewHeight));
+        const int relX = juce::jlimit(0, innerBounds.getWidth() - 1, localPos.x - innerBounds.getX());
+        const int relY = juce::jlimit(0, innerBounds.getHeight() - 1, localPos.y - innerBounds.getY());
+        const float tx = (innerBounds.getWidth() > 1)
+            ? static_cast<float>(relX) / static_cast<float>(innerBounds.getWidth() - 1)
+            : 0.0f;
+        const float ty = (innerBounds.getHeight() > 1)
+            ? static_cast<float>(relY) / static_cast<float>(innerBounds.getHeight() - 1)
+            : 0.0f;
+        return {
+            viewX + juce::jlimit(0, viewW - 1, static_cast<int>(std::round(tx * static_cast<float>(juce::jmax(0, viewW - 1))))),
+            viewY + juce::jlimit(0, viewH - 1, static_cast<int>(std::round(ty * static_cast<float>(juce::jmax(0, viewH - 1)))))
+        };
+    };
+
+    auto applyPointFromLocal = [&](juce::Point<int> localPos)
+    {
+        const int relX = juce::jlimit(0, innerBounds.getWidth() - 1, localPos.x - innerBounds.getX());
+        const int relY = juce::jlimit(0, innerBounds.getHeight() - 1, localPos.y - innerBounds.getY());
+        processor.beatSpaceSetPointFromGridCell(relX, relY, innerBounds.getWidth(), innerBounds.getHeight());
+        refreshFromProcessor();
+        repaint(beatSpacePreviewBounds.expanded(2));
+    };
+
+    auto pointToPreviewPixel = [&](const juce::Point<int>& p) -> juce::Point<float>
+    {
+        const int tableSize = juce::jmax(1, state.tableSize);
+        const int viewX = juce::jlimit(0, tableSize - 1, state.viewX);
+        const int viewY = juce::jlimit(0, tableSize - 1, state.viewY);
+        const int viewW = juce::jmax(1, juce::jmin(tableSize - viewX, state.viewWidth));
+        const int viewH = juce::jmax(1, juce::jmin(tableSize - viewY, state.viewHeight));
+        const int relX = juce::jlimit(0, viewW - 1, p.x - viewX);
+        const int relY = juce::jlimit(0, viewH - 1, p.y - viewY);
+        const float scaleX = static_cast<float>(innerBounds.getWidth()) / static_cast<float>(viewW);
+        const float scaleY = static_cast<float>(innerBounds.getHeight()) / static_cast<float>(viewH);
+        return {
+            static_cast<float>(innerBounds.getX()) + (static_cast<float>(relX) * scaleX),
+            static_cast<float>(innerBounds.getY()) + (static_cast<float>(relY) * scaleY)
+        };
+    };
+
+    auto selectorArea = [&]() -> juce::Rectangle<float>
+    {
+        auto area = innerBounds.toFloat().reduced(4.0f);
+        area.setY(area.getBottom() - 16.0f);
+        area.setHeight(15.0f);
+        return area;
+    };
+
+    if (e.mods.isLeftButtonDown() && !e.mods.isPopupMenu())
+    {
+        const auto selector = selectorArea();
+        if (selector.contains(e.position))
+        {
+            const float chipW = selector.getWidth() / static_cast<float>(StepVstHostAudioProcessor::BeatSpaceChannels);
+            const int channel = juce::jlimit(
+                0,
+                StepVstHostAudioProcessor::BeatSpaceChannels - 1,
+                static_cast<int>(std::floor((e.position.x - selector.getX()) / juce::jmax(1.0f, chipW))));
+            processor.beatSpaceSelectChannel(channel);
+            refreshFromProcessor();
+            repaint(beatSpacePreviewBounds.expanded(2));
+            return;
+        }
+
+        if (state.pathRecordArmedChannel >= 0)
+        {
+            const auto startPoint = pointFromLocal(e.getPosition());
+            if (processor.beatSpacePathRecordStart(state.pathRecordArmedChannel, startPoint))
+            {
+                beatSpacePathRecordingActive = true;
+                beatSpacePathRecordingChannel = state.pathRecordArmedChannel;
+                refreshFromProcessor();
+                repaint(beatSpacePreviewBounds.expanded(2));
+                return;
+            }
+        }
+
+        int nearestChannel = -1;
+        float nearestDistanceSq = std::numeric_limits<float>::max();
+        for (int c = 0; c < StepVstHostAudioProcessor::BeatSpaceChannels; ++c)
+        {
+            const auto idx = static_cast<size_t>(c);
+            const auto point = state.channelMorphActive[idx]
+                ? state.channelMorphCurrent[idx]
+                : state.channelPoints[idx];
+            const auto pixel = pointToPreviewPixel(point);
+            const float dx = pixel.x - e.position.x;
+            const float dy = pixel.y - e.position.y;
+            const float d2 = (dx * dx) + (dy * dy);
+            if (d2 < nearestDistanceSq)
+            {
+                nearestDistanceSq = d2;
+                nearestChannel = c;
+            }
+        }
+        if (nearestChannel >= 0 && nearestDistanceSq <= (9.0f * 9.0f))
+        {
+            beatSpaceDragChannel = nearestChannel;
+            beatSpaceDragSingleChannel = state.linkAllChannels && (nearestChannel != state.selectedChannel);
+            if (!beatSpaceDragSingleChannel)
+                processor.beatSpaceSelectChannel(nearestChannel);
+
+            const auto point = pointFromLocal(e.getPosition());
+            processor.beatSpaceSetChannelPoint(
+                beatSpaceDragChannel,
+                point,
+                !beatSpaceDragSingleChannel,
+                true);
+            refreshFromProcessor();
+            repaint(beatSpacePreviewBounds.expanded(2));
+            return;
+        }
+
+        applyPointFromLocal(e.getPosition());
+        return;
+    }
+
+    if (!e.mods.isPopupMenu())
+        return;
+
+    const juce::Point<int> tablePoint = pointFromLocal(e.getPosition());
+
+    juce::PopupMenu menu;
+    menu.addSectionHeader("BeatSpace View");
+    menu.addItem(9000, "Text Overlay", true, beatSpaceTextOverlayEnabled);
+    menu.addItem(9001, "Confidence Overlay", true, processor.isBeatSpaceConfidenceOverlayEnabled());
+    menu.addItem(9002, "Path Overlay", true, processor.isBeatSpacePathOverlayEnabled());
+    menu.addSeparator();
+
+    menu.addSectionHeader("Tag BeatSpace Region");
+    constexpr int kTagBase = 1000;
+    for (int category = 0; category < StepVstHostAudioProcessor::BeatSpaceChannels; ++category)
+    {
+        menu.addItem(
+            kTagBase + category,
+            "Add point to " + StepVstHostAudioProcessor::getBeatSpaceSpaceName(category),
+            true,
+            state.categoryManual[static_cast<size_t>(category)]);
+    }
+    menu.addSeparator();
+    menu.addItem(2000, "Clear nearest tag");
+    menu.addItem(2001, "Clear all tags");
+    menu.addSeparator();
+    menu.addItem(3000, "Zoom In");
+    menu.addItem(3001, "Zoom Out");
+
+    const int result = menu.showAt(this);
+    if (result == 9000)
+    {
+        beatSpaceTextOverlayEnabled = !beatSpaceTextOverlayEnabled;
+    }
+    else if (result == 9001)
+    {
+        processor.setBeatSpaceConfidenceOverlayEnabled(!processor.isBeatSpaceConfidenceOverlayEnabled());
+    }
+    else if (result == 9002)
+    {
+        processor.setBeatSpacePathOverlayEnabled(!processor.isBeatSpacePathOverlayEnabled());
+    }
+    else if (result >= kTagBase && result < (kTagBase + StepVstHostAudioProcessor::BeatSpaceChannels))
+    {
+        processor.beatSpaceSetManualCategoryAnchor(result - kTagBase, tablePoint);
+    }
+    else if (result == 2000)
+    {
+        processor.beatSpaceClearNearestManualCategoryAnchor(tablePoint, 7);
+    }
+    else if (result == 2001)
+    {
+        processor.beatSpaceClearAllManualCategoryAnchors();
+    }
+    else if (result == 3000)
+    {
+        processor.beatSpaceAdjustZoom(+1);
+    }
+    else if (result == 3001)
+    {
+        processor.beatSpaceAdjustZoom(-1);
+    }
+
+    refreshFromProcessor();
+    repaint(beatSpacePreviewBounds.expanded(2));
+}
+
+void GlobalControlPanel::mouseDrag(const juce::MouseEvent& e)
+{
+    if (!e.mods.isLeftButtonDown())
+    {
+        beatSpaceDragChannel = -1;
+        beatSpaceDragSingleChannel = false;
+        return;
+    }
+    if (beatSpacePreviewBounds.isEmpty())
+        return;
+
+    const auto state = processor.getBeatSpaceVisualState();
+    if (!state.decoderReady)
+        return;
+
+    auto innerBounds = beatSpacePreviewBounds.reduced(3);
+    if (!innerBounds.contains(e.getPosition()))
+        return;
+
+    const auto pointFromLocal = [&](juce::Point<int> localPos) -> juce::Point<int>
+    {
+        const int tableSize = juce::jmax(1, state.tableSize);
+        const int viewX = juce::jlimit(0, tableSize - 1, state.viewX);
+        const int viewY = juce::jlimit(0, tableSize - 1, state.viewY);
+        const int viewW = juce::jmax(1, juce::jmin(tableSize - viewX, state.viewWidth));
+        const int viewH = juce::jmax(1, juce::jmin(tableSize - viewY, state.viewHeight));
+        const int relX = juce::jlimit(0, innerBounds.getWidth() - 1, localPos.x - innerBounds.getX());
+        const int relY = juce::jlimit(0, innerBounds.getHeight() - 1, localPos.y - innerBounds.getY());
+        const float tx = (innerBounds.getWidth() > 1)
+            ? static_cast<float>(relX) / static_cast<float>(innerBounds.getWidth() - 1)
+            : 0.0f;
+        const float ty = (innerBounds.getHeight() > 1)
+            ? static_cast<float>(relY) / static_cast<float>(innerBounds.getHeight() - 1)
+            : 0.0f;
+        return {
+            viewX + juce::jlimit(0, viewW - 1, static_cast<int>(std::round(tx * static_cast<float>(juce::jmax(0, viewW - 1))))),
+            viewY + juce::jlimit(0, viewH - 1, static_cast<int>(std::round(ty * static_cast<float>(juce::jmax(0, viewH - 1)))))
+        };
+    };
+
+    if (beatSpacePathRecordingActive && beatSpacePathRecordingChannel >= 0)
+    {
+        processor.beatSpacePathRecordAppendPoint(
+            beatSpacePathRecordingChannel,
+            pointFromLocal(e.getPosition()));
+        refreshFromProcessor();
+        repaint(beatSpacePreviewBounds.expanded(2));
+        return;
+    }
+
+    if (beatSpaceDragChannel >= 0)
+    {
+        processor.beatSpaceSetChannelPoint(
+            beatSpaceDragChannel,
+            pointFromLocal(e.getPosition()),
+            !beatSpaceDragSingleChannel,
+            true);
+    }
+    else
+    {
+        const int relX = juce::jlimit(0, innerBounds.getWidth() - 1, e.x - innerBounds.getX());
+        const int relY = juce::jlimit(0, innerBounds.getHeight() - 1, e.y - innerBounds.getY());
+        processor.beatSpaceSetPointFromGridCell(relX, relY, innerBounds.getWidth(), innerBounds.getHeight());
+    }
+    refreshFromProcessor();
+    repaint(beatSpacePreviewBounds.expanded(2));
+}
+
+void GlobalControlPanel::mouseUp(const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+    {
+        auto* source = (e.originalComponent != nullptr) ? e.originalComponent : e.eventComponent;
+        for (int channel = 0; channel < StepVstHostAudioProcessor::BeatSpaceChannels; ++channel)
+        {
+            auto& button = beatSpacePathButtons[static_cast<size_t>(channel)];
+            if (source == &button || (source != nullptr && button.isParentOf(source)))
+            {
+                processor.beatSpacePathClear(channel);
+                if (processor.getBeatSpacePathRecordArmedChannel() == channel)
+                    processor.setBeatSpacePathRecordArmedChannel(-1);
+                if (beatSpacePathRecordingActive && beatSpacePathRecordingChannel == channel)
+                {
+                    beatSpacePathRecordingActive = false;
+                    beatSpacePathRecordingChannel = -1;
+                }
+
+                refreshFromProcessor();
+                if (!beatSpacePreviewBounds.isEmpty())
+                    repaint(beatSpacePreviewBounds.expanded(2));
+                return;
+            }
+        }
+    }
+
+    juce::ignoreUnused(e);
+    beatSpaceDragChannel = -1;
+    beatSpaceDragSingleChannel = false;
+
+    if (!beatSpacePathRecordingActive || beatSpacePathRecordingChannel < 0)
+        return;
+
+    processor.beatSpacePathRecordFinishAndPlay(beatSpacePathRecordingChannel);
+    beatSpacePathRecordingActive = false;
+    beatSpacePathRecordingChannel = -1;
+    refreshFromProcessor();
+    if (!beatSpacePreviewBounds.isEmpty())
+        repaint(beatSpacePreviewBounds.expanded(2));
+}
+
+void GlobalControlPanel::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
+{
+    if (beatSpacePreviewBounds.isEmpty())
+    {
+        beatSpaceWheelZoomAccumulator = 0.0f;
+        return;
+    }
+
+    const auto innerBounds = beatSpacePreviewBounds.reduced(3);
+    if (!innerBounds.contains(e.getPosition()))
+    {
+        beatSpaceWheelZoomAccumulator = 0.0f;
+        return;
+    }
+
+    const float wheelDelta = (std::abs(wheel.deltaY) >= std::abs(wheel.deltaX))
+        ? wheel.deltaY
+        : wheel.deltaX;
+    if (std::abs(wheelDelta) < 0.001f)
+        return;
+
+    constexpr float kWheelZoomThreshold = 0.22f;
+    beatSpaceWheelZoomAccumulator += wheelDelta;
+
+    int zoomDelta = 0;
+    while (beatSpaceWheelZoomAccumulator >= kWheelZoomThreshold)
+    {
+        ++zoomDelta;
+        beatSpaceWheelZoomAccumulator -= kWheelZoomThreshold;
+    }
+    while (beatSpaceWheelZoomAccumulator <= -kWheelZoomThreshold)
+    {
+        --zoomDelta;
+        beatSpaceWheelZoomAccumulator += kWheelZoomThreshold;
+    }
+    if (zoomDelta == 0)
+        return;
+
+    processor.beatSpaceAdjustZoom(zoomDelta);
+    refreshFromProcessor();
+    repaint(beatSpacePreviewBounds.expanded(2));
 }
 
 void GlobalControlPanel::resized()
@@ -5027,66 +6529,218 @@ void GlobalControlPanel::resized()
     auto bounds = getLocalBounds().reduced(6);
 
     auto titleRow = bounds.removeFromTop(20);
-    tooltipsToggle.setBounds(titleRow.removeFromRight(86));
-    titleRow.removeFromRight(6);
-    soundTouchToggle.setBounds(titleRow.removeFromRight(102));
-    titleRow.removeFromRight(6);
-    momentaryToggle.setBounds(titleRow.removeFromRight(92));
-    titleRow.removeFromRight(6);
-    hostedShowGuiButton.setBounds(titleRow.removeFromRight(84));
-    titleRow.removeFromRight(6);
-    hostedLoadButton.setBounds(titleRow.removeFromRight(84));
-    titleRow.removeFromRight(6);
     versionLabel.setBounds(titleRow.removeFromRight(62));
-    titleRow.removeFromRight(6);
+    titleRow.removeFromRight(8);
     titleLabel.setBounds(titleRow);
-    
-    bounds.removeFromTop(2);
+
+    bounds.removeFromTop(4);
+    auto hostRow = bounds.removeFromTop(24);
+    hostedLoadButton.setBounds(hostRow.removeFromLeft(92));
+    hostRow.removeFromLeft(6);
+    hostedShowGuiButton.setBounds(hostRow.removeFromLeft(92));
+    hostRow.removeFromLeft(6);
+    hostedMakeDefaultButton.setBounds(hostRow.removeFromLeft(138));
+    hostRow.removeFromLeft(8);
+    tooltipsToggle.setBounds(hostRow.removeFromLeft(92));
+
+    bounds.removeFromTop(3);
     hostedStatusLabel.setBounds(bounds.removeFromTop(14));
-    bounds.removeFromTop(2);
+    bounds.removeFromTop(4);
+
+    auto toggleRow = bounds.removeFromTop(24);
+    limiterToggle.setBounds(toggleRow.removeFromLeft(84));
+    toggleRow.removeFromLeft(6);
+    soundTouchToggle.setBounds(toggleRow.removeFromLeft(108));
+    bounds.removeFromTop(4);
 
     auto controlsArea = bounds;
-    const int sliderWidth = 48;
-    const int dropdownWidth = 92;
-    const int spacing = 6;
 
-    auto masterArea = controlsArea.removeFromLeft(sliderWidth);
+    const int spacing = 6;
+    beatSpacePreviewBounds = {};
+
+    const int previewWidth = juce::jlimit(
+        300,
+        juce::jmax(340, controlsArea.getWidth() - 305),
+        static_cast<int>(std::round(static_cast<double>(controlsArea.getWidth()) * 0.64)));
+    auto previewArea = controlsArea.removeFromRight(previewWidth);
+    if (!previewArea.isEmpty())
+        controlsArea.removeFromRight(spacing);
+
+    auto masterArea = controlsArea.removeFromLeft(56);
     masterVolumeLabel.setBounds(masterArea.removeFromTop(16));
     masterArea.removeFromTop(2);
     masterVolumeSlider.setBounds(masterArea);
     controlsArea.removeFromLeft(spacing);
 
-    auto limiterArea = controlsArea.removeFromLeft(84);
-    limiterToggle.setBounds(limiterArea.removeFromTop(24));
-    controlsArea.removeFromLeft(spacing);
-
-    auto swingArea = controlsArea.removeFromLeft(dropdownWidth);
+    auto controlRows = controlsArea;
+    auto selectRow = controlRows.removeFromTop(52);
+    auto swingArea = selectRow.removeFromLeft(116);
     swingDivisionLabel.setBounds(swingArea.removeFromTop(16));
     swingArea.removeFromTop(2);
-    swingDivisionBox.setBounds(swingArea.removeFromTop(28));
-    controlsArea.removeFromLeft(spacing);
+    swingDivisionBox.setBounds(swingArea.removeFromTop(30));
+    selectRow.removeFromLeft(spacing);
 
-    auto outputRoutingArea = controlsArea.removeFromLeft(140);
+    auto momentaryArea = selectRow.removeFromRight(118);
+    if (!selectRow.isEmpty())
+        selectRow.removeFromRight(spacing);
+
+    auto outputRoutingArea = selectRow.removeFromLeft(156);
     outputRoutingLabel.setBounds(outputRoutingArea.removeFromTop(16));
     outputRoutingArea.removeFromTop(2);
-    outputRoutingBox.setBounds(outputRoutingArea.removeFromTop(28));
+    outputRoutingBox.setBounds(outputRoutingArea.removeFromTop(30));
+    momentaryArea.removeFromTop(16);
+    momentaryToggle.setBounds(momentaryArea.removeFromTop(26));
+
+    controlRows.removeFromTop(2);
+    auto presetLabelRow = controlRows.removeFromTop(16);
+    auto stripPresetLabelArea = presetLabelRow.removeFromLeft(96);
+    microtonicPresetStripLabel.setBounds(stripPresetLabelArea);
+    presetLabelRow.removeFromLeft(4);
+    microtonicPresetListLabel.setBounds(presetLabelRow);
+
+    controlRows.removeFromTop(2);
+    auto presetSelectRow = controlRows.removeFromTop(24);
+    auto stripPresetSelectArea = presetSelectRow.removeFromLeft(96);
+    microtonicPresetStripBox.setBounds(stripPresetSelectArea);
+    presetSelectRow.removeFromLeft(4);
+    microtonicPresetListBox.setBounds(presetSelectRow);
+
+    controlRows.removeFromTop(4);
+    auto presetButtonRow = controlRows.removeFromTop(24);
+    auto deleteArea = presetButtonRow.removeFromRight(76);
+    microtonicPresetDeleteButton.setBounds(deleteArea);
+    presetButtonRow.removeFromRight(4);
+    auto recallArea = presetButtonRow.removeFromRight(110);
+    microtonicPresetRecallButton.setBounds(recallArea);
+    presetButtonRow.removeFromRight(4);
+    microtonicPresetStoreButton.setBounds(presetButtonRow);
+
+    controlRows.removeFromTop(4);
+    auto morphRow = controlRows.removeFromTop(24);
+    beatSpaceMorphLabel.setBounds(morphRow.removeFromLeft(72));
+    morphRow.removeFromLeft(4);
+    beatSpaceMorphSlider.setBounds(morphRow.removeFromLeft(juce::jmax(120, morphRow.getWidth())));
+
+    auto layoutPathButtonsInRow = [&](juce::Rectangle<int> row)
+    {
+        const int pathGap = 4;
+        const int totalGap = pathGap * (StepVstHostAudioProcessor::BeatSpaceChannels - 1);
+        const int buttonWidth = juce::jmax(
+            28,
+            (row.getWidth() - totalGap) / StepVstHostAudioProcessor::BeatSpaceChannels);
+        for (int channel = 0; channel < StepVstHostAudioProcessor::BeatSpaceChannels; ++channel)
+        {
+            auto& button = beatSpacePathButtons[static_cast<size_t>(channel)];
+            button.setBounds(row.removeFromLeft(buttonWidth));
+            if (channel < (StepVstHostAudioProcessor::BeatSpaceChannels - 1))
+                row.removeFromLeft(pathGap);
+        }
+    };
+
+    if (previewArea.getWidth() >= 180 && previewArea.getHeight() >= 112)
+    {
+        auto pathRow = previewArea.removeFromTop(22);
+        layoutPathButtonsInRow(pathRow);
+        previewArea.removeFromTop(3);
+        beatSpacePreviewLabel.setBounds(previewArea.removeFromTop(17));
+        previewArea.removeFromTop(4);
+        beatSpacePreviewBounds = previewArea.reduced(2);
+    }
+    else
+    {
+        beatSpacePreviewLabel.setBounds({});
+        for (auto& button : beatSpacePathButtons)
+            button.setBounds({});
+    }
+
 }
 
 void GlobalControlPanel::refreshFromProcessor()
 {
     swingDivisionBox.setSelectedId(processor.getSwingDivisionSelection() + 1, juce::dontSendNotification);
     momentaryToggle.setToggleState(processor.isControlPageMomentary(), juce::dontSendNotification);
+    rebuildMicrotonicPresetList();
+    const auto beatState = processor.getBeatSpaceVisualState();
+    beatSpaceMorphSlider.setValue(beatState.morphDurationMs, juce::dontSendNotification);
+    for (int channel = 0; channel < StepVstHostAudioProcessor::BeatSpaceChannels; ++channel)
+    {
+        const auto idx = static_cast<size_t>(channel);
+        const bool pathActive = beatState.pathActive[idx];
+        const bool armed = (beatState.pathRecordArmedChannel == channel);
+        auto& button = beatSpacePathButtons[idx];
+        button.setToggleState(armed, juce::dontSendNotification);
+        button.setButtonText(
+            "P" + juce::String(channel + 1)
+            + (pathActive ? "*" : ""));
+        styleUiButton(button, false);
+        constexpr std::array<uint32_t, StepVstHostAudioProcessor::BeatSpaceChannels> kCategoryColors {
+            0xffea5455u, 0xfff07f3au, 0xff6bcf80u, 0xff4db6b8u, 0xff5f8fd3u, 0xff9f7ccbu
+        };
+        const int assignment = juce::jlimit(
+            0,
+            StepVstHostAudioProcessor::BeatSpaceChannels - 1,
+            beatState.channelCategoryAssignment[idx]);
+        const juce::Colour base = juce::Colour(kCategoryColors[static_cast<size_t>(assignment)]);
+        const float alpha = (pathActive || armed) ? 0.90f : 0.62f;
+        button.setColour(juce::TextButton::buttonColourId, base.withAlpha(alpha));
+        button.setColour(juce::TextButton::buttonOnColourId, base.brighter(0.22f).withAlpha(0.95f));
+        button.setColour(juce::TextButton::textColourOffId, juce::Colour(0xfff8fbff));
+        button.setColour(juce::TextButton::textColourOnId, juce::Colour(0xfff8fbff));
+    }
+    juce::String beatLabel = "BeatSpace";
+    if (!beatState.decoderReady)
+        beatLabel += " (decoder missing)";
+    else if (beatState.mappingReady && beatState.microtonicExactMapping)
+        beatLabel += " (exact " + juce::String(beatState.mappedChannels) + "/" + juce::String(StepVstHostAudioProcessor::BeatSpaceChannels) + ")";
+    else if (beatState.mappingReady)
+        beatLabel += " (mapped " + juce::String(beatState.mappedChannels) + "/" + juce::String(StepVstHostAudioProcessor::BeatSpaceChannels) + ")";
+    else if (beatState.mappedChannels <= 0)
+        beatLabel += " (mapping unavailable)";
+    else
+        beatLabel += " (" + juce::String(beatState.mappedChannels) + "/" + juce::String(StepVstHostAudioProcessor::BeatSpaceChannels) + ")";
+    if (beatState.maxRecallError > 0.001f)
+        beatLabel += " err " + juce::String(beatState.maxRecallError, 3);
+    if (beatState.colorClustersReady)
+        beatLabel += " clustered";
+    int manualTagCount = 0;
+    for (const auto isManual : beatState.categoryManual)
+    {
+        if (isManual)
+            ++manualTagCount;
+    }
+    if (manualTagCount > 0)
+        beatLabel += " tags " + juce::String(manualTagCount);
+    beatSpacePreviewLabel.setText(beatLabel, juce::dontSendNotification);
+    juce::String beatTooltip = beatState.statusMessage.isNotEmpty() ? beatState.statusMessage : beatLabel;
+    beatTooltip += "\nClick 1..6 chips (or dots) to select a channel before dragging.";
+    beatTooltip += "\nUse mouse wheel over XY to zoom in/out.";
+    beatTooltip += "\nUse P1..P6 buttons, then click-drag on XY to record PPQ-synced BeatSpace paths.";
+    beatTooltip += "\nRight-click on XY for text/confidence/path overlays and category tagging.";
+    beatTooltip += "\nPreview follows current BeatSpace zoom and pan window.";
+    beatSpacePreviewLabel.setTooltip(beatTooltip);
+
+    auto loadedFile = processor.getLoadedHostedInstrumentFile();
+    if (loadedFile != juce::File())
+        hostedLastPluginFile = loadedFile;
+    else
+    {
+        auto defaultFile = processor.getDefaultHostedInstrumentFile();
+        if (defaultFile != juce::File())
+            hostedLastPluginFile = defaultFile;
+    }
     updateHostedPluginStatus();
+    if (!beatSpacePreviewBounds.isEmpty())
+        repaint(beatSpacePreviewBounds.expanded(2));
 }
 
 //==============================================================================
 // MonomePagesPanel Implementation
 //==============================================================================
 
-MonomePagesPanel::MonomePagesPanel(MlrVSTAudioProcessor& p)
+MonomePagesPanel::MonomePagesPanel(StepVstHostAudioProcessor& p)
     : processor(p)
 {
-    for (int i = 0; i < MlrVSTAudioProcessor::NumControlRowPages; ++i)
+    for (int i = 0; i < StepVstHostAudioProcessor::NumControlRowPages; ++i)
     {
         auto& row = rows[static_cast<size_t>(i)];
         row.positionLabel.setJustificationType(juce::Justification::centred);
@@ -5104,7 +6758,7 @@ MonomePagesPanel::MonomePagesPanel(MlrVSTAudioProcessor& p)
                 return;
             const auto modeAtButton = processor.getControlModeForControlButton(i);
             const bool isDown = rows[static_cast<size_t>(i)].modeButton.isDown();
-            processor.setControlModeFromGui(isDown ? modeAtButton : MlrVSTAudioProcessor::ControlMode::Normal,
+            processor.setControlModeFromGui(isDown ? modeAtButton : StepVstHostAudioProcessor::ControlMode::Normal,
                                             isDown);
             refreshFromProcessor();
         };
@@ -5115,7 +6769,7 @@ MonomePagesPanel::MonomePagesPanel(MlrVSTAudioProcessor& p)
             const auto modeAtButton = processor.getControlModeForControlButton(i);
             const bool active = processor.isControlModeActive()
                                 && processor.getCurrentControlMode() == modeAtButton;
-            processor.setControlModeFromGui(active ? MlrVSTAudioProcessor::ControlMode::Normal
+            processor.setControlModeFromGui(active ? StepVstHostAudioProcessor::ControlMode::Normal
                                                    : modeAtButton,
                                             !active);
             refreshFromProcessor();
@@ -5155,7 +6809,7 @@ void MonomePagesPanel::paint(juce::Graphics& g)
     bounds.removeFromTop(4);
 
     auto pageOrderArea = bounds.removeFromTop(58);
-    const int numSlots = MlrVSTAudioProcessor::NumControlRowPages;
+    const int numSlots = StepVstHostAudioProcessor::NumControlRowPages;
     const int gapX = 4;
     const int slotWidth = juce::jmax(52, (pageOrderArea.getWidth() - ((numSlots - 1) * gapX)) / juce::jmax(1, numSlots));
     const int slotHeight = pageOrderArea.getHeight();
@@ -5180,12 +6834,12 @@ void MonomePagesPanel::resized()
     bounds.removeFromTop(4);
 
     auto pageOrderArea = bounds.removeFromTop(58);
-    const int numSlots = MlrVSTAudioProcessor::NumControlRowPages;
+    const int numSlots = StepVstHostAudioProcessor::NumControlRowPages;
     const int gapX = 4;
     const int slotWidth = juce::jmax(52, (pageOrderArea.getWidth() - ((numSlots - 1) * gapX)) / juce::jmax(1, numSlots));
     const int slotHeight = pageOrderArea.getHeight();
 
-    for (int i = 0; i < MlrVSTAudioProcessor::NumControlRowPages; ++i)
+    for (int i = 0; i < StepVstHostAudioProcessor::NumControlRowPages; ++i)
     {
         auto& row = rows[static_cast<size_t>(i)];
         juce::Rectangle<int> slotBounds(pageOrderArea.getX() + i * (slotWidth + gapX),
@@ -5217,11 +6871,11 @@ void MonomePagesPanel::refreshFromProcessor()
     const auto order = processor.getControlPageOrder();
     const auto activeMode = processor.getCurrentControlMode();
 
-    for (int i = 0; i < MlrVSTAudioProcessor::NumControlRowPages; ++i)
+    for (int i = 0; i < StepVstHostAudioProcessor::NumControlRowPages; ++i)
     {
         auto& row = rows[static_cast<size_t>(i)];
         const auto modeAtButton = order[static_cast<size_t>(i)];
-        const bool isActive = (activeMode == modeAtButton) && (activeMode != MlrVSTAudioProcessor::ControlMode::Normal);
+        const bool isActive = (activeMode == modeAtButton) && (activeMode != StepVstHostAudioProcessor::ControlMode::Normal);
 
         row.positionLabel.setText("#" + juce::String(i + 1), juce::dontSendNotification);
         row.modeButton.setButtonText(getMonomePageShortName(modeAtButton));
@@ -5232,7 +6886,7 @@ void MonomePagesPanel::refreshFromProcessor()
         row.modeButton.setColour(juce::TextButton::textColourOffId,
                                  isActive ? juce::Colour(0xfff7fbff) : kTextPrimary);
         row.upButton.setEnabled(i > 0);
-        row.downButton.setEnabled(i < (MlrVSTAudioProcessor::NumControlRowPages - 1));
+        row.downButton.setEnabled(i < (StepVstHostAudioProcessor::NumControlRowPages - 1));
         row.upButton.setColour(juce::TextButton::buttonColourId, isActive ? kAccent.withAlpha(0.6f) : juce::Colour(0xffd7e3ef));
         row.downButton.setColour(juce::TextButton::buttonColourId, isActive ? kAccent.withAlpha(0.6f) : juce::Colour(0xffd7e3ef));
     }
@@ -5242,7 +6896,7 @@ void MonomePagesPanel::refreshFromProcessor()
 void MonomePagesPanel::updatePresetButtons()
 {
     const int loadedPreset = processor.getLoadedPresetIndex();
-    for (int i = 0; i < MlrVSTAudioProcessor::MaxPresetSlots; ++i)
+    for (int i = 0; i < StepVstHostAudioProcessor::MaxPresetSlots; ++i)
     {
         const bool exists = processor.presetExists(i);
         auto& button = presetButtons[static_cast<size_t>(i)];
@@ -5269,19 +6923,19 @@ void MonomePagesPanel::layoutPresetButtons()
 
     const int viewportWidth = juce::jmax(0, presetViewport.getWidth() - presetViewport.getScrollBarThickness());
     const int buttonWidth = juce::jmax(minButtonWidth,
-                                       (viewportWidth - ((MlrVSTAudioProcessor::PresetColumns - 1) * gap))
-                                       / MlrVSTAudioProcessor::PresetColumns);
-    const int contentWidth = (MlrVSTAudioProcessor::PresetColumns * buttonWidth)
-                             + ((MlrVSTAudioProcessor::PresetColumns - 1) * gap);
-    const int contentHeight = (MlrVSTAudioProcessor::PresetRows * buttonHeight)
-                              + ((MlrVSTAudioProcessor::PresetRows - 1) * gap);
+                                       (viewportWidth - ((StepVstHostAudioProcessor::PresetColumns - 1) * gap))
+                                       / StepVstHostAudioProcessor::PresetColumns);
+    const int contentWidth = (StepVstHostAudioProcessor::PresetColumns * buttonWidth)
+                             + ((StepVstHostAudioProcessor::PresetColumns - 1) * gap);
+    const int contentHeight = (StepVstHostAudioProcessor::PresetRows * buttonHeight)
+                              + ((StepVstHostAudioProcessor::PresetRows - 1) * gap);
 
     presetGridContent.setSize(contentWidth, contentHeight);
 
-    for (int i = 0; i < MlrVSTAudioProcessor::MaxPresetSlots; ++i)
+    for (int i = 0; i < StepVstHostAudioProcessor::MaxPresetSlots; ++i)
     {
-        const int x = i % MlrVSTAudioProcessor::PresetColumns;
-        const int y = i / MlrVSTAudioProcessor::PresetColumns;
+        const int x = i % StepVstHostAudioProcessor::PresetColumns;
+        const int y = i / StepVstHostAudioProcessor::PresetColumns;
         presetButtons[static_cast<size_t>(i)].setBounds(x * (buttonWidth + gap),
                                                         y * (buttonHeight + gap),
                                                         buttonWidth,
@@ -5311,7 +6965,7 @@ void MonomePagesPanel::onPresetButtonClicked(int presetIndex)
 // ModulationControlPanel Implementation
 //==============================================================================
 
-ModulationControlPanel::ModulationControlPanel(MlrVSTAudioProcessor& p)
+ModulationControlPanel::ModulationControlPanel(StepVstHostAudioProcessor& p)
     : processor(p)
 {
     titleLabel.setText("Per-Row Modulation Sequencer", juce::dontSendNotification);
@@ -5674,7 +7328,7 @@ void ModulationControlPanel::refreshFromEngine()
     if (!engine)
         return;
 
-    selectedStrip = juce::jlimit(0, MlrVSTAudioProcessor::MaxStrips - 1, processor.getLastMonomePressedStripRow());
+    selectedStrip = juce::jlimit(0, StepVstHostAudioProcessor::MaxStrips - 1, processor.getLastMonomePressedStripRow());
     stripLabel.setText("Selected Row: " + juce::String(selectedStrip + 1) + " (last pressed)", juce::dontSendNotification);
 
     const auto state = engine->getModSequencerState(selectedStrip);
@@ -5726,10 +7380,10 @@ void ModulationControlPanel::refreshFromEngine()
 
 
 //==============================================================================
-// MlrVSTAudioProcessorEditor Implementation
+// StepVstHostAudioProcessorEditor Implementation
 //==============================================================================
 
-MlrVSTAudioProcessorEditor::MlrVSTAudioProcessorEditor(MlrVSTAudioProcessor& p)
+StepVstHostAudioProcessorEditor::StepVstHostAudioProcessorEditor(StepVstHostAudioProcessor& p)
     : AudioProcessorEditor(&p), audioProcessor(p)
 {
     setupLookAndFeel();
@@ -5764,18 +7418,18 @@ MlrVSTAudioProcessorEditor::MlrVSTAudioProcessorEditor(MlrVSTAudioProcessor& p)
     lastPresetRefreshToken = audioProcessor.getPresetRefreshToken();
 }
 
-int MlrVSTAudioProcessorEditor::getDetectedGuiStripCount() const
+int StepVstHostAudioProcessorEditor::getDetectedGuiStripCount() const
 {
     const int reportedStripCount = audioProcessor.getMonomeActiveStripCount();
     if (reportedStripCount <= 0)
         return 6;
 
-    return juce::jlimit(1, MlrVSTAudioProcessor::MaxStrips, reportedStripCount);
+    return juce::jlimit(1, StepVstHostAudioProcessor::MaxStrips, reportedStripCount);
 }
 
-void MlrVSTAudioProcessorEditor::setActiveGuiStripCount(int stripCount, bool forceRelayout)
+void StepVstHostAudioProcessorEditor::setActiveGuiStripCount(int stripCount, bool forceRelayout)
 {
-    const int clampedStripCount = juce::jlimit(1, MlrVSTAudioProcessor::MaxStrips, stripCount);
+    const int clampedStripCount = juce::jlimit(1, StepVstHostAudioProcessor::MaxStrips, stripCount);
     if (!forceRelayout && clampedStripCount == activeGuiStripCount)
         return;
 
@@ -5800,9 +7454,9 @@ void MlrVSTAudioProcessorEditor::setActiveGuiStripCount(int stripCount, bool for
     repaint();
 }
 
-void MlrVSTAudioProcessorEditor::createUIComponents()
+void StepVstHostAudioProcessorEditor::createUIComponents()
 {
-    constexpr int kTotalSampleStrips = MlrVSTAudioProcessor::MaxStrips;
+    constexpr int kTotalSampleStrips = StepVstHostAudioProcessor::MaxStrips;
     // Monome grid hidden to save space - use physical monome instead
     monomeGrid = std::make_unique<MonomeGridDisplay>(audioProcessor);
     // Don't add to view - saves space
@@ -5816,14 +7470,12 @@ void MlrVSTAudioProcessorEditor::createUIComponents()
     };
     monomePagesControl = std::make_unique<MonomePagesPanel>(audioProcessor);
     presetControl = std::make_unique<PresetControlPanel>(audioProcessor);
-    pathsControl = std::make_unique<PathsControlPanel>(audioProcessor);
     
     // Create TABBED top controls to save space
     topTabs = std::make_unique<juce::TabbedComponent>(juce::TabbedButtonBar::TabsAtTop);
     topTabs->addTab("Global Controls", juce::Colour(0xffedf3fa), globalControl.get(), false);
     topTabs->addTab("Presets", juce::Colour(0xffedf3fa), presetControl.get(), false);
     topTabs->addTab("Monome Device", juce::Colour(0xffedf3fa), monomeControl.get(), false);
-    topTabs->addTab("Paths", juce::Colour(0xffedf3fa), pathsControl.get(), false);
     topTabs->setTabBarDepth(28);
     topTabs->setCurrentTabIndex(0);  // Global Controls visible by default
     addAndMakeVisible(*topTabs);
@@ -5921,12 +7573,12 @@ void MlrVSTAudioProcessorEditor::createUIComponents()
     addAndMakeVisible(*mainTabs);
 }
 
-MlrVSTAudioProcessorEditor::~MlrVSTAudioProcessorEditor()
+StepVstHostAudioProcessorEditor::~StepVstHostAudioProcessorEditor()
 {
     stopTimer();
 }
 
-void MlrVSTAudioProcessorEditor::setupLookAndFeel()
+void StepVstHostAudioProcessorEditor::setupLookAndFeel()
 {
     darkLookAndFeel.setDefaultSansSerifTypefaceName("Helvetica Neue");
 
@@ -5963,7 +7615,7 @@ void MlrVSTAudioProcessorEditor::setupLookAndFeel()
     setLookAndFeel(&darkLookAndFeel);
 }
 
-void MlrVSTAudioProcessorEditor::setTooltipsEnabled(bool enabled)
+void StepVstHostAudioProcessorEditor::setTooltipsEnabled(bool enabled)
 {
     tooltipsEnabled = enabled;
     if (tooltipsEnabled)
@@ -5977,7 +7629,7 @@ void MlrVSTAudioProcessorEditor::setTooltipsEnabled(bool enabled)
     }
 }
 
-void MlrVSTAudioProcessorEditor::paint(juce::Graphics& g)
+void StepVstHostAudioProcessorEditor::paint(juce::Graphics& g)
 {
     auto area = getLocalBounds().toFloat();
 
@@ -6008,14 +7660,14 @@ void MlrVSTAudioProcessorEditor::paint(juce::Graphics& g)
     g.drawText(buildInfo, getWidth() - 440, 11, 424, 18, juce::Justification::centredRight);
 }
 
-bool MlrVSTAudioProcessorEditor::keyPressed(const juce::KeyPress& key)
+bool StepVstHostAudioProcessorEditor::keyPressed(const juce::KeyPress& key)
 {
     (void) key;
     // Spacebar does nothing in plugin mode - DAW controls transport
     return false;  // Let other keys pass through
 }
 
-void MlrVSTAudioProcessorEditor::resized()
+void StepVstHostAudioProcessorEditor::resized()
 {
     // Safety check
     if (!topTabs || !mainTabs)
@@ -6029,8 +7681,13 @@ void MlrVSTAudioProcessorEditor::resized()
     auto margin = 6;
     bounds.reduce(margin, margin);
     
-    // Top section: TABBED controls (Global/Presets/Monome)
-    auto topBar = bounds.removeFromTop(124);
+    // Top section: TABBED controls (Global/Presets/Monome).
+    // Keep enough vertical space so all Global Controls rows stay visible.
+    const int topBarHeight = juce::jlimit(
+        220,
+        310,
+        static_cast<int>(std::round(static_cast<double>(bounds.getHeight()) * 0.56)));
+    auto topBar = bounds.removeFromTop(topBarHeight);
     topTabs->setBounds(topBar);
     
     bounds.removeFromTop(margin);
@@ -6044,7 +7701,7 @@ void MlrVSTAudioProcessorEditor::resized()
 
 //==============================================================================
 
-void MlrVSTAudioProcessorEditor::timerCallback()
+void StepVstHostAudioProcessorEditor::timerCallback()
 {
     if (!audioProcessor.getAudioEngine())
         return;
@@ -6058,7 +7715,7 @@ void MlrVSTAudioProcessorEditor::timerCallback()
         presetControl->refreshVisualState();
 
     const bool modulationActive = audioProcessor.isControlModeActive()
-        && audioProcessor.getCurrentControlMode() == MlrVSTAudioProcessor::ControlMode::Modulation;
+        && audioProcessor.getCurrentControlMode() == StepVstHostAudioProcessor::ControlMode::Modulation;
     setActiveGuiStripCount(getDetectedGuiStripCount(), false);
     for (int i = 0; i < stripControls.size(); ++i)
     {

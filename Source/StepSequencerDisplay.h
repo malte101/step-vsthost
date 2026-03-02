@@ -67,7 +67,7 @@ public:
     void setStepPattern(const std::array<bool, 64>& pattern, int steps)
     {
         stepPattern = pattern;
-        totalSteps = juce::jlimit(1, 64, steps);
+        totalSteps = juce::jlimit(2, 64, steps);
         pruneSelectionToVisibleSteps();
         repaint();
     }
@@ -1098,6 +1098,19 @@ private:
         const float volumeShift = dragShiftRaw;
 
         float rampMultiShift = rampOverflowShift;
+        auto resolvedBaseMax = [&](size_t idx, float depthNorm)
+        {
+            const float baseStart = juce::jlimit(0.0f, 1.0f, dragStartVelocityStart[idx]);
+            const float baseEnd = juce::jlimit(0.0f, 1.0f, dragStartVelocityEnd[idx]);
+            float baseMax = juce::jmax(baseStart, baseEnd);
+            if (baseMax < 0.001f)
+            {
+                // Keep divide/ramp edits audible when editing previously silent/disabled steps.
+                baseMax = juce::jlimit(0.25f, 1.0f, 0.35f + (0.65f * juce::jlimit(0.0f, 1.0f, depthNorm)));
+            }
+            return baseMax;
+        };
+
         if (rampTool && targetCount > 1)
         {
             float baseLow = 1.0f;
@@ -1111,9 +1124,7 @@ private:
                     continue;
 
                 const size_t idx = static_cast<size_t>(step);
-                const float baseStart = juce::jlimit(0.0f, 1.0f, dragStartVelocityStart[idx]);
-                const float baseEnd = juce::jlimit(0.0f, 1.0f, dragStartVelocityEnd[idx]);
-                const float baseMax = juce::jmax(baseStart, baseEnd);
+                const float baseMax = resolvedBaseMax(idx, depth);
                 const float t0 = static_cast<float>(targetIndex) / static_cast<float>(targetCount);
                 const float t1 = static_cast<float>(targetIndex + 1) / static_cast<float>(targetCount);
 
@@ -1153,9 +1164,20 @@ private:
             {
                 case EditTool::Divide:
                 {
+                    setStepEnabled(step, true, true);
                     const int base = dragStartSubdivisions[static_cast<size_t>(step)];
                     const int next = juce::jlimit(1, kMaxStepSubdivisions, base + ((-deltaY) / 14));
                     setSubdivision(step, next, true);
+
+                    const auto idx = static_cast<size_t>(step);
+                    const float baseStart = juce::jlimit(0.0f, 1.0f, dragStartVelocityStart[idx]);
+                    const float baseEnd = juce::jlimit(0.0f, 1.0f, dragStartVelocityEnd[idx]);
+                    if (juce::jmax(baseStart, baseEnd) < 0.001f)
+                    {
+                        const float defaultVelocity =
+                            juce::jlimit(0.25f, 1.0f, 0.35f + (0.65f * valueFromY));
+                        setVelocityRange(step, defaultVelocity, defaultVelocity, true);
+                    }
                     break;
                 }
 
@@ -1173,10 +1195,9 @@ private:
 
                 case EditTool::RampUp:
                 {
+                    setStepEnabled(step, true, true);
                     const size_t idx = static_cast<size_t>(step);
-                    const float baseStart = juce::jlimit(0.0f, 1.0f, dragStartVelocityStart[idx]);
-                    const float baseEnd = juce::jlimit(0.0f, 1.0f, dragStartVelocityEnd[idx]);
-                    const float baseMax = juce::jmax(baseStart, baseEnd);
+                    const float baseMax = resolvedBaseMax(idx, depth);
                     const float rampShift = (targetCount > 1) ? rampMultiShift : rampOverflowShift;
                     if (dragStartSubdivisions[idx] <= 1)
                     {
@@ -1210,10 +1231,9 @@ private:
 
                 case EditTool::RampDown:
                 {
+                    setStepEnabled(step, true, true);
                     const size_t idx = static_cast<size_t>(step);
-                    const float baseStart = juce::jlimit(0.0f, 1.0f, dragStartVelocityStart[idx]);
-                    const float baseEnd = juce::jlimit(0.0f, 1.0f, dragStartVelocityEnd[idx]);
-                    const float baseMax = juce::jmax(baseStart, baseEnd);
+                    const float baseMax = resolvedBaseMax(idx, depth);
                     const float rampShift = (targetCount > 1) ? rampMultiShift : rampOverflowShift;
                     if (dragStartSubdivisions[idx] <= 1)
                     {
@@ -1411,9 +1431,11 @@ private:
                 setStepEnabled(stepIndex, !stepPattern[static_cast<size_t>(stepIndex)], true);
                 break;
             case 2:
+                setStepEnabled(stepIndex, true, true);
                 setSubdivision(stepIndex, 2, true);
                 break;
             case 3:
+                setStepEnabled(stepIndex, true, true);
                 setSubdivision(stepIndex, 4, true);
                 break;
             case 4:

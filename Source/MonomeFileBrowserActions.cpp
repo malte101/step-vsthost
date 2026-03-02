@@ -8,18 +8,30 @@ namespace
 constexpr int kPrevButton = 0;
 constexpr int kNextButton = 1;
 constexpr int kFavoriteFirstButton = 3; // x2 intentionally left empty as visual divider
-constexpr int kFavoriteButtonCount = MlrVSTAudioProcessor::BrowserFavoriteSlots;
+constexpr int kFavoriteButtonCount = StepVstHostAudioProcessor::BrowserFavoriteSlots;
 constexpr int kBarsFirstButton = 11;
 constexpr int kBarsLastButton = 14;
 }
 
-void handleButtonPress(MlrVSTAudioProcessor& processor, EnhancedAudioStrip& strip, int stripIndex, int x)
+void handleButtonPress(StepVstHostAudioProcessor& processor, EnhancedAudioStrip& strip, int stripIndex, int x)
 {
     juce::ignoreUnused(strip);
     if (x == kPrevButton)
-        processor.loadAdjacentFile(stripIndex, -1);  // Prev
+    {
+        if (!processor.loadAdjacentBeatSpacePresetForAssignedSpace(stripIndex, -1))
+        {
+            processor.loadAdjacentFile(stripIndex, -1);  // Prev
+            processor.queueHostedProgramChangeForStrip(stripIndex, -1);
+        }
+    }
     else if (x == kNextButton)
-        processor.loadAdjacentFile(stripIndex, 1);   // Next
+    {
+        if (!processor.loadAdjacentBeatSpacePresetForAssignedSpace(stripIndex, 1))
+        {
+            processor.loadAdjacentFile(stripIndex, 1);   // Next
+            processor.queueHostedProgramChangeForStrip(stripIndex, 1);
+        }
+    }
     else if (x >= kFavoriteFirstButton && x < (kFavoriteFirstButton + kFavoriteButtonCount))
         processor.beginBrowserFavoritePadHold(stripIndex, x - kFavoriteFirstButton);
     else if (x >= kBarsFirstButton && x <= kBarsLastButton)
@@ -34,14 +46,14 @@ void handleButtonPress(MlrVSTAudioProcessor& processor, EnhancedAudioStrip& stri
     }
 }
 
-void handleButtonRelease(MlrVSTAudioProcessor& processor, EnhancedAudioStrip& strip, int stripIndex, int x)
+void handleButtonRelease(StepVstHostAudioProcessor& processor, EnhancedAudioStrip& strip, int stripIndex, int x)
 {
     juce::ignoreUnused(strip);
     if (x >= kFavoriteFirstButton && x < (kFavoriteFirstButton + kFavoriteButtonCount))
         processor.endBrowserFavoritePadHold(stripIndex, x - kFavoriteFirstButton);
 }
 
-void renderRow(const MlrVSTAudioProcessor& processor, const ModernAudioEngine& engine, const EnhancedAudioStrip& strip, int stripIndex, int y, int newLedState[16][16])
+void renderRow(const StepVstHostAudioProcessor& processor, const ModernAudioEngine& engine, const EnhancedAudioStrip& strip, int stripIndex, int y, int newLedState[16][16])
 {
     // File browser controls (always visible)
     newLedState[kPrevButton][y] = 8;  // Prev

@@ -2,7 +2,7 @@
   ==============================================================================
 
     PluginEditor.h
-    Modern Comprehensive UI for mlrVST
+    Modern Comprehensive UI for step-vsthost
 
   ==============================================================================
 */
@@ -90,7 +90,7 @@ class FXStripControl : public juce::Component,
                        public juce::Timer
 {
 public:
-    FXStripControl(int idx, MlrVSTAudioProcessor& p);
+    FXStripControl(int idx, StepVstHostAudioProcessor& p);
     
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -99,7 +99,7 @@ public:
     
 private:
     int stripIndex;
-    MlrVSTAudioProcessor& processor;
+    StepVstHostAudioProcessor& processor;
     juce::Colour stripColor;
     
     juce::Label stripLabel;
@@ -125,7 +125,7 @@ class StripControl : public juce::Component,
                      public juce::FileDragAndDropTarget
 {
 public:
-    StripControl(int stripIndex, MlrVSTAudioProcessor& p);
+    StripControl(int stripIndex, StepVstHostAudioProcessor& p);
     
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -423,7 +423,7 @@ public:
     
 private:
     int stripIndex;
-    MlrVSTAudioProcessor& processor;
+    StepVstHostAudioProcessor& processor;
     juce::Colour stripColor;  // Track strip color for controls
     ColoredKnobLookAndFeel knobLookAndFeel;
     
@@ -447,14 +447,13 @@ private:
     juce::Slider scratchSlider;     // Compact rotary - scratch amount
     juce::Slider sliceLengthSlider; // Compact rotary - loop slice length
     juce::ComboBox patternLengthBox; // Step mode pattern length (16..64)
-    DraggableNumberBox stepLengthReadoutBox; // Step mode draggable numeric length (1..64)
+    DraggableNumberBox stepLengthReadoutBox; // Step mode draggable numeric length (2..64)
     DraggableNumberBox laneMidiChannelBox; // Step lane MIDI channel (1..16)
     DraggableNumberBox laneMidiNoteBox;    // Step lane MIDI note (0..127)
     juce::Slider stepAttackSlider;  // Step mode attack (ms)
     juce::Slider stepDecaySlider;   // Step mode decay (ms)
     juce::Slider stepReleaseSlider; // Step mode release (ms)
     juce::Label tempoLabel;         // Shows current beats setting
-    juce::ComboBox recordBarsBox;   // Selects loop bars for this strip
     juce::Label volumeLabel;        // Label below knob
     juce::Label panLabel;           // Label below knob
     juce::Label pitchLabel;         // Label below knob
@@ -464,9 +463,10 @@ private:
     juce::Label stepAttackLabel;    // Step envelope labels
     juce::Label stepDecayLabel;
     juce::Label stepReleaseLabel;
+    juce::Label beatSpaceCategoryLabel;
+    juce::ComboBox beatSpaceCategoryBox;
     juce::Label laneMidiChannelLabel;
     juce::Label laneMidiNoteLabel;
-    juce::ComboBox playModeBox;     // Play mode selector (step-only)
     juce::ComboBox directionModeBox; // Direction mode selector (Normal/Reverse/PingPong/Random)
     juce::Slider grainSizeSlider;
     juce::Slider grainDensitySlider;
@@ -526,6 +526,8 @@ private:
     };
     GrainSubPage grainSubPage = GrainSubPage::Pitch;
     juce::TextButton loadButton;    // Small
+    juce::TextButton muteButton;    // Per-strip mute
+    juce::TextButton soloButton;    // Per-strip solo
     juce::Label stripLabel;         // Small
     
     // Attachments
@@ -534,8 +536,14 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pitchAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> speedAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sliceLengthAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> stepAttackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> stepDecayAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> stepReleaseAttachment;
+    bool suppressBeatSpaceCategoryAction = false;
     
     void setupComponents();
+    void rebuildBeatSpaceCategoryMenu();
+    bool handleBeatSpaceCategoryAction(int selectedId);
     void loadSample();
     void loadSampleFromFile(const juce::File& file);
     static bool isSupportedAudioFile(const juce::File& file);
@@ -592,7 +600,7 @@ class MonomeGridDisplay : public juce::Component,
                           public juce::Timer
 {
 public:
-    MonomeGridDisplay(MlrVSTAudioProcessor& p);
+    MonomeGridDisplay(StepVstHostAudioProcessor& p);
     
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -605,7 +613,7 @@ public:
     void sendGridStateToMonome();  // Send LED state to actual hardware
     
 private:
-    MlrVSTAudioProcessor& processor;
+    StepVstHostAudioProcessor& processor;
     
     static constexpr int gridWidth = 16;
     static constexpr int gridHeight = 8;
@@ -627,14 +635,14 @@ class MonomeControlPanel : public juce::Component,
                            public juce::Timer
 {
 public:
-    MonomeControlPanel(MlrVSTAudioProcessor& p);
+    MonomeControlPanel(StepVstHostAudioProcessor& p);
     
     void paint(juce::Graphics& g) override;
     void resized() override;
     void timerCallback() override;
     
 private:
-    MlrVSTAudioProcessor& processor;
+    StepVstHostAudioProcessor& processor;
     
     juce::Label titleLabel;
     juce::ComboBox deviceSelector;
@@ -675,19 +683,25 @@ private:
 /**
  * GlobalControlPanel - Master controls
  */
-class GlobalControlPanel : public juce::Component
+class GlobalControlPanel : public juce::Component,
+                           public juce::Timer
 {
 public:
-    GlobalControlPanel(MlrVSTAudioProcessor& p);
+    GlobalControlPanel(StepVstHostAudioProcessor& p);
     ~GlobalControlPanel() override;
     
     void paint(juce::Graphics& g) override;
+    void timerCallback() override;
+    void mouseDown(const juce::MouseEvent& e) override;
+    void mouseDrag(const juce::MouseEvent& e) override;
+    void mouseUp(const juce::MouseEvent& e) override;
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
     void resized() override;
     void refreshFromProcessor();
     std::function<void(bool)> onTooltipsToggled;
     
 private:
-    MlrVSTAudioProcessor& processor;
+    StepVstHostAudioProcessor& processor;
     
     juce::Label titleLabel;
     juce::Label versionLabel;
@@ -700,10 +714,29 @@ private:
     juce::Label outputRoutingLabel;
     juce::ToggleButton momentaryToggle;
     juce::ToggleButton soundTouchToggle;
+    juce::Label beatSpaceMorphLabel;
+    juce::Slider beatSpaceMorphSlider;
     juce::ToggleButton tooltipsToggle;
     juce::TextButton hostedLoadButton;
     juce::TextButton hostedShowGuiButton;
+    juce::TextButton hostedMakeDefaultButton;
+    juce::Label microtonicPresetStripLabel;
+    juce::ComboBox microtonicPresetStripBox;
+    juce::Label microtonicPresetListLabel;
+    juce::ComboBox microtonicPresetListBox;
+    juce::TextButton microtonicPresetStoreButton;
+    juce::TextButton microtonicPresetRecallButton;
+    juce::TextButton microtonicPresetDeleteButton;
     juce::Label hostedStatusLabel;
+    std::array<juce::TextButton, StepVstHostAudioProcessor::BeatSpaceChannels> beatSpacePathButtons;
+    juce::Label beatSpacePreviewLabel;
+    juce::Rectangle<int> beatSpacePreviewBounds;
+    int beatSpaceDragChannel = -1;
+    bool beatSpaceDragSingleChannel = false;
+    bool beatSpaceTextOverlayEnabled = true;
+    bool beatSpacePathRecordingActive = false;
+    int beatSpacePathRecordingChannel = -1;
+    float beatSpaceWheelZoomAccumulator = 0.0f;
     juce::File hostedLastPluginFile;
     std::unique_ptr<juce::DocumentWindow> hostedEditorWindow;
     
@@ -715,8 +748,10 @@ private:
 
     void loadHostedPlugin();
     void openHostedPluginEditor();
+    void makeHostedPluginDefault();
     void closeHostedPluginEditor();
     void updateHostedPluginStatus();
+    void rebuildMicrotonicPresetList();
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GlobalControlPanel)
 };
@@ -729,7 +764,7 @@ class MonomePagesPanel : public juce::Component,
                          public juce::Timer
 {
 public:
-    MonomePagesPanel(MlrVSTAudioProcessor& p);
+    MonomePagesPanel(StepVstHostAudioProcessor& p);
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -737,7 +772,7 @@ public:
     void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
 
 private:
-    MlrVSTAudioProcessor& processor;
+    StepVstHostAudioProcessor& processor;
 
     juce::Label titleLabel;
     juce::Label modeLabel;
@@ -749,12 +784,12 @@ private:
         juce::TextButton upButton;
         juce::TextButton downButton;
     };
-    std::array<PageRow, MlrVSTAudioProcessor::NumControlRowPages> rows;
+    std::array<PageRow, StepVstHostAudioProcessor::NumControlRowPages> rows;
     juce::Label presetGridLabel;
     juce::Label presetInstructionsLabel;
     juce::Viewport presetViewport;
     juce::Component presetGridContent;
-    std::array<juce::TextButton, MlrVSTAudioProcessor::MaxPresetSlots> presetButtons;
+    std::array<juce::TextButton, StepVstHostAudioProcessor::MaxPresetSlots> presetButtons;
 
     void refreshFromProcessor();
     void updatePresetButtons();
@@ -772,7 +807,7 @@ class ModulationControlPanel : public juce::Component,
                                public juce::Timer
 {
 public:
-    ModulationControlPanel(MlrVSTAudioProcessor& p);
+    ModulationControlPanel(StepVstHostAudioProcessor& p);
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -790,7 +825,7 @@ private:
         ShapeDownCell
     };
 
-    MlrVSTAudioProcessor& processor;
+    StepVstHostAudioProcessor& processor;
     int selectedStrip = 0;
 
     juce::Label titleLabel;
@@ -837,7 +872,7 @@ private:
 class PresetControlPanel : public juce::Component
 {
 public:
-    PresetControlPanel(MlrVSTAudioProcessor& p);
+    PresetControlPanel(StepVstHostAudioProcessor& p);
     
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -846,7 +881,7 @@ public:
     void refreshVisualState();
     
 private:
-    MlrVSTAudioProcessor& processor;
+    StepVstHostAudioProcessor& processor;
     
     juce::Label titleLabel;
     juce::Label instructionsLabel;
@@ -856,7 +891,7 @@ private:
     juce::TextButton exportWavButton;
     juce::Viewport presetViewport;
     juce::Component presetGridContent;
-    std::array<juce::TextButton, MlrVSTAudioProcessor::MaxPresetSlots> presetButtons;
+    std::array<juce::TextButton, StepVstHostAudioProcessor::MaxPresetSlots> presetButtons;
     int selectedPresetIndex = 0;
     juce::String presetNameDraft;
     juce::File lastExportDirectory;
@@ -878,14 +913,14 @@ class PathsControlPanel : public juce::Component,
                           public juce::Timer
 {
 public:
-    PathsControlPanel(MlrVSTAudioProcessor& p);
+    PathsControlPanel(StepVstHostAudioProcessor& p);
     
     void paint(juce::Graphics& g) override;
     void resized() override;
     void timerCallback() override;
     
 private:
-    MlrVSTAudioProcessor& processor;
+    StepVstHostAudioProcessor& processor;
     
     juce::Label titleLabel;
     juce::Viewport scrollViewport;
@@ -904,11 +939,11 @@ private:
         juce::TextButton stepSetButton;
         juce::TextButton stepClearButton;
     };
-    std::array<PathRow, MlrVSTAudioProcessor::MaxStrips> rows;
+    std::array<PathRow, StepVstHostAudioProcessor::MaxStrips> rows;
     
     void refreshLabels();
-    void chooseDirectory(int stripIndex, MlrVSTAudioProcessor::SamplePathMode mode);
-    void clearDirectory(int stripIndex, MlrVSTAudioProcessor::SamplePathMode mode);
+    void chooseDirectory(int stripIndex, StepVstHostAudioProcessor::SamplePathMode mode);
+    void clearDirectory(int stripIndex, StepVstHostAudioProcessor::SamplePathMode mode);
     static juce::String pathToDisplay(const juce::File& file);
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PathsControlPanel)
@@ -916,14 +951,14 @@ private:
 
 //==============================================================================
 /**
- * Modern mlrVST Editor - Main window
+ * Modern step-vsthost Editor - Main window
  */
-class MlrVSTAudioProcessorEditor : public juce::AudioProcessorEditor,
+class StepVstHostAudioProcessorEditor : public juce::AudioProcessorEditor,
                                    public juce::Timer
 {
 public:
-    MlrVSTAudioProcessorEditor(MlrVSTAudioProcessor&);
-    ~MlrVSTAudioProcessorEditor() override;
+    StepVstHostAudioProcessorEditor(StepVstHostAudioProcessor&);
+    ~StepVstHostAudioProcessorEditor() override;
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -945,7 +980,7 @@ private:
         }
     };
 
-    MlrVSTAudioProcessor& audioProcessor;
+    StepVstHostAudioProcessor& audioProcessor;
     
     // Main sections
     std::unique_ptr<MonomeGridDisplay> monomeGrid;
@@ -988,5 +1023,5 @@ private:
     static constexpr int windowWidth = 1000;
     static constexpr int windowHeight = 1020;
     
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MlrVSTAudioProcessorEditor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(StepVstHostAudioProcessorEditor)
 };

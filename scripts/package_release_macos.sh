@@ -6,7 +6,7 @@ usage() {
 Usage: ./scripts/package_release_macos.sh [--build-dir DIR] [--config CONFIG]
 
 Options:
-  --build-dir DIR   Build directory containing mlrVST_artefacts (default: auto-detect)
+  --build-dir DIR   Build directory containing step_vsthost_artefacts (default: auto-detect)
   --config CONFIG   Build config folder (default: Release)
   -h, --help        Show this help
 EOF
@@ -46,9 +46,9 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 if [[ -z "${BUILD_DIR}" ]]; then
-    if [[ -d "${REPO_ROOT}/cmake-build-release/mlrVST_artefacts/${CONFIG}" ]]; then
+    if [[ -d "${REPO_ROOT}/cmake-build-release/step_vsthost_artefacts/${CONFIG}" ]]; then
         BUILD_DIR="cmake-build-release"
-    elif [[ -d "${REPO_ROOT}/Build/mlrVST_artefacts/${CONFIG}" ]]; then
+    elif [[ -d "${REPO_ROOT}/Build/step_vsthost_artefacts/${CONFIG}" ]]; then
         BUILD_DIR="Build"
     else
         echo "Could not auto-detect build dir. Pass --build-dir explicitly." >&2
@@ -56,9 +56,9 @@ if [[ -z "${BUILD_DIR}" ]]; then
     fi
 fi
 
-ARTEFACTS_DIR="${REPO_ROOT}/${BUILD_DIR}/mlrVST_artefacts/${CONFIG}"
-VST3_BUNDLE="${ARTEFACTS_DIR}/VST3/mlrVST.vst3"
-AU_BUNDLE="${ARTEFACTS_DIR}/AU/mlrVST.component"
+ARTEFACTS_DIR="${REPO_ROOT}/${BUILD_DIR}/step_vsthost_artefacts/${CONFIG}"
+VST3_BUNDLE="${ARTEFACTS_DIR}/VST3/step-vsthost.vst3"
+AU_BUNDLE="${ARTEFACTS_DIR}/AU/step-vsthost.component"
 
 if [[ ! -d "${VST3_BUNDLE}" && ! -d "${AU_BUNDLE}" ]]; then
     echo "No plugin bundles found under: ${ARTEFACTS_DIR}" >&2
@@ -81,7 +81,7 @@ ARCH="$(uname -m)"
 OUT_DIR="${REPO_ROOT}/release"
 mkdir -p "${OUT_DIR}"
 
-STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mlrvst-release-XXXXXX")"
+STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/step-vsthost-release-XXXXXX")"
 cleanup() {
     rm -rf "${STAGE_DIR}"
 }
@@ -102,7 +102,7 @@ package_bundle() {
     local format="$1"
     local bundle_path="$2"
     local suffix="$3"
-    local package_name="mlrVST-macos-${ARCH}-${suffix}-${TIMESTAMP}"
+    local package_name="step-vsthost-macos-${ARCH}-${suffix}-${TIMESTAMP}"
     local package_dir="${STAGE_DIR}/${package_name}"
     local zip_path="${OUT_DIR}/${package_name}.zip"
 
@@ -111,7 +111,7 @@ package_bundle() {
     copy_common_notices "${package_dir}"
 
     cat > "${package_dir}/RELEASE_MANIFEST.txt" <<EOF
-Project: mlrVST
+Project: step-vsthost
 Format: ${format}
 Build dir: ${BUILD_DIR}
 Config: ${CONFIG}

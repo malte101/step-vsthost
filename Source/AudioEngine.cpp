@@ -10,16 +10,16 @@
 #include "AudioEngine.h"
 #include "PlayheadSpeedQuantizer.h"
 #include "StilsonModel.h"
-#ifndef MLRVST_ENABLE_HUOVILAINEN
-#define MLRVST_ENABLE_HUOVILAINEN 0
+#ifndef STEPVSTHOST_ENABLE_HUOVILAINEN
+#define STEPVSTHOST_ENABLE_HUOVILAINEN 0
 #endif
-#ifndef MLRVST_ENABLE_SOUNDTOUCH
-#define MLRVST_ENABLE_SOUNDTOUCH 0
+#ifndef STEPVSTHOST_ENABLE_SOUNDTOUCH
+#define STEPVSTHOST_ENABLE_SOUNDTOUCH 0
 #endif
-#if MLRVST_ENABLE_HUOVILAINEN
+#if STEPVSTHOST_ENABLE_HUOVILAINEN
 #include "HuovilainenModel.h"
 #endif
-#if MLRVST_ENABLE_SOUNDTOUCH
+#if STEPVSTHOST_ENABLE_SOUNDTOUCH
 #include <soundtouch/SoundTouch.h>
 #endif
 #include <random>
@@ -80,7 +80,7 @@ double grainScratchSecondsFromAmount(float amountPercent)
     return juce::jlimit(0.015, 3.0, std::pow(t, 1.7) * 3.0);
 }
 
-#if MLRVST_ENABLE_SOUNDTOUCH
+#if STEPVSTHOST_ENABLE_SOUNDTOUCH
 double swingUnitBeatsFromDivision(EnhancedAudioStrip::SwingDivision division)
 {
     switch (division)
@@ -1432,7 +1432,7 @@ void EnhancedAudioStrip::loadSample(const juce::AudioBuffer<float>& buffer, doub
         transientSliceMapDirty = true;
 
     rebuildSampleAnalysisCacheLocked();
-#if MLRVST_ENABLE_SOUNDTOUCH
+#if STEPVSTHOST_ENABLE_SOUNDTOUCH
     invalidateSoundTouchSwingCache();
 #endif
 }
@@ -1447,7 +1447,7 @@ void EnhancedAudioStrip::setTransientSliceMode(bool enabled)
         if (transientSliceMapDirty && sampleBuffer.getNumSamples() > 0)
             rebuildTransientSliceMap();
     }
-#if MLRVST_ENABLE_SOUNDTOUCH
+#if STEPVSTHOST_ENABLE_SOUNDTOUCH
     invalidateSoundTouchSwingCache();
 #endif
 }
@@ -3526,7 +3526,7 @@ bool EnhancedAudioStrip::loadSampleFromFile(const juce::File& file)
         grainCenterSmoother.setCurrentAndTargetValue(playbackPosition.load());
         resetGrainState();
         resetPitchShifter();
-#if MLRVST_ENABLE_SOUNDTOUCH
+#if STEPVSTHOST_ENABLE_SOUNDTOUCH
         invalidateSoundTouchSwingCache();
 #endif
         return true;
@@ -3588,7 +3588,7 @@ void EnhancedAudioStrip::clearSample()
     stepSubdivisionGateOpen = true;
     stepTraversalRatioAtLastTick = -1.0;
     stepTraversalPhaseOffsetTicks = 0.0;
-#if MLRVST_ENABLE_SOUNDTOUCH
+#if STEPVSTHOST_ENABLE_SOUNDTOUCH
     invalidateSoundTouchSwingCache();
 #endif
     resetGrainState();
@@ -3596,7 +3596,7 @@ void EnhancedAudioStrip::clearSample()
     resetScratchComboState();
 }
 
-#if MLRVST_ENABLE_SOUNDTOUCH
+#if STEPVSTHOST_ENABLE_SOUNDTOUCH
 void EnhancedAudioStrip::invalidateSoundTouchSwingCache()
 {
     soundTouchSwingCacheValid = false;
@@ -3975,6 +3975,7 @@ void EnhancedAudioStrip::process(juce::AudioBuffer<float>& output,
                                 double quantizeBeats)
 {
     juce::ScopedLock lock(bufferLock);
+    const float outputGainScale = juce::jlimit(0.0f, 4.0f, outputGainMultiplier.load(std::memory_order_acquire));
 
     // UI preview demand decay (message thread bumps this via preview getters).
     const int previewCountdown = grainPreviewRequestCountdown.load(std::memory_order_acquire);
@@ -4391,6 +4392,9 @@ void EnhancedAudioStrip::process(juce::AudioBuffer<float>& output,
         }
         const bool hasSwingTraversal = std::isfinite(swingMappedPositionInLoop);
         const bool traversalAtUnity = (std::abs(playheadTraversalRatio - 1.0) <= 1.0e-6);
+        const bool returningToUnityTraversal = traversalAtUnity
+            && (playheadTraversalRatioAtLastCalc > 0.0)
+            && (std::abs(playheadTraversalRatioAtLastCalc - 1.0) > 1.0e-6);
 
         int traversalSlices = juce::jmax(1, loopCols);
         if (hasSwingTraversal && traversalAtUnity)
@@ -4448,10 +4452,18 @@ void EnhancedAudioStrip::process(juce::AudioBuffer<float>& output,
         }
         else if (std::abs(playheadTraversalRatio - playheadTraversalRatioAtLastCalc) > 1.0e-6)
         {
-            // Preserve the currently audible traversal slice when speed changes.
-            const double oldTraversalPos
-                = (baseSliceForTraversal * playheadTraversalRatioAtLastCalc) + playheadTraversalPhaseOffsetSlices;
-            playheadTraversalPhaseOffsetSlices = oldTraversalPos - (baseSliceForTraversal * playheadTraversalRatio);
+            if (returningToUnityTraversal)
+            {
+                // At unity, hard-lock traversal phase to PPQ so strips re-align.
+                playheadTraversalPhaseOffsetSlices = 0.0;
+            }
+            else
+            {
+                // Preserve the currently audible traversal slice when speed changes.
+                const double oldTraversalPos
+                    = (baseSliceForTraversal * playheadTraversalRatioAtLastCalc) + playheadTraversalPhaseOffsetSlices;
+                playheadTraversalPhaseOffsetSlices = oldTraversalPos - (baseSliceForTraversal * playheadTraversalRatio);
+            }
             playheadTraversalRatioAtLastCalc = playheadTraversalRatio;
         }
 
@@ -4486,7 +4498,7 @@ void EnhancedAudioStrip::process(juce::AudioBuffer<float>& output,
     const juce::AudioBuffer<float>* playbackSourceBuffer = &sampleBuffer;
     double playbackSourceLoopStartSamples = loopStartSamples;
     double playbackSourceSampleLength = sampleLength;
-#if MLRVST_ENABLE_SOUNDTOUCH
+#if STEPVSTHOST_ENABLE_SOUNDTOUCH
     if (shouldUseSoundTouchSwingCache(loopLength, beatsForLoop, loopCols, isScratching, playheadTraversalRatio)
         && rebuildSoundTouchSwingCache(loopStartSamples, loopLength, beatsForLoop, loopCols))
     {
@@ -4695,6 +4707,7 @@ void EnhancedAudioStrip::process(juce::AudioBuffer<float>& output,
         stepSampler.setAmpAttackMs(stepEnvelopeAttackMs.load(std::memory_order_acquire));
         stepSampler.setAmpDecayMs(stepEnvelopeDecayMs.load(std::memory_order_acquire));
         stepSampler.setAmpReleaseMs(stepEnvelopeReleaseMs.load(std::memory_order_acquire));
+        const bool stepStutterTimingActive = (momentaryStutterTimingActive.load(std::memory_order_acquire) != 0);
         const double stepTraversalRatio = juce::jmax(
             0.125,
             static_cast<double>(playheadSpeedRatio.load(std::memory_order_acquire)));
@@ -4706,9 +4719,24 @@ void EnhancedAudioStrip::process(juce::AudioBuffer<float>& output,
         }
         else if (std::abs(stepTraversalRatio - stepTraversalRatioAtLastTick) > 1.0e-6)
         {
-            // Keep phase continuous across speed changes so the playmarker does not jump.
-            if (positionInfo.getPpqPosition().hasValue() && tempo > 0.0)
+            const bool stepReturningToUnity = (std::abs(stepTraversalRatio - 1.0) <= 1.0e-6)
+                && (std::abs(stepTraversalRatioAtLastTick - 1.0) > 1.0e-6);
+            if (stepReturningToUnity)
             {
+                // At unity, force strict PPQ lock so all strips share the same phase.
+                stepTraversalPhaseOffsetTicks = 0.0;
+                if (positionInfo.getPpqPosition().hasValue() && tempo > 0.0)
+                {
+                    const double ppqNow = applySwingToPpq(*positionInfo.getPpqPosition());
+                    const double sequencePosNow = ppqNow * stepEventsPerPpq;
+                    stepTraversalTick = static_cast<int64_t>(std::floor(sequencePosNow)) - 1;
+                    stepSubdivisionTriggerIndex = 0;
+                    stepSubdivisionGateOpen = false;
+                }
+            }
+            else if (positionInfo.getPpqPosition().hasValue() && tempo > 0.0)
+            {
+                // Keep phase continuous across non-unity speed changes.
                 const double ppqNow = applySwingToPpq(*positionInfo.getPpqPosition());
                 const double oldStepEventsPerPpq = juce::jmax(1.0e-6, 4.0 * stepTraversalRatioAtLastTick);
                 const double oldSequencePosNow = (ppqNow * oldStepEventsPerPpq) + stepTraversalPhaseOffsetTicks;
@@ -4716,7 +4744,18 @@ void EnhancedAudioStrip::process(juce::AudioBuffer<float>& output,
             }
             stepTraversalRatioAtLastTick = stepTraversalRatio;
         }
+        if (!std::isfinite(stepTraversalPhaseOffsetTicks))
+            stepTraversalPhaseOffsetTicks = 0.0;
+        const double maxPhaseOffsetTicks = juce::jmax(64.0, stepEventsPerPpq * 512.0);
+        stepTraversalPhaseOffsetTicks = juce::jlimit(-maxPhaseOffsetTicks, maxPhaseOffsetTicks, stepTraversalPhaseOffsetTicks);
         const double stepLengthPpq = 1.0 / stepEventsPerPpq;
+
+        // Hold-stutter must lock the playhead and avoid normal PPQ traversal while active.
+        if (stepStutterTimingActive)
+        {
+            stepSampler.process(output, startSample, numSamples, outputGainScale);
+            return;
+        }
 
         // DON'T copy strip parameters to StepSampler here!
         // StepSampler parameters are controlled directly by monome buttons
@@ -4894,7 +4933,7 @@ void EnhancedAudioStrip::process(juce::AudioBuffer<float>& output,
                     segmentSamples = juce::jmin(segmentSamples, juce::jmax(1, untilBoundary));
                 }
 
-                stepSampler.process(output, startSample + processed, segmentSamples);
+                stepSampler.process(output, startSample + processed, segmentSamples, outputGainScale);
                 processed += segmentSamples;
 
                 if (processed < numSamples
@@ -4949,7 +4988,7 @@ void EnhancedAudioStrip::process(juce::AudioBuffer<float>& output,
         }
         else
         {
-            stepSampler.process(output, startSample, numSamples);
+            stepSampler.process(output, startSample, numSamples, outputGainScale);
         }
         
         // Done - return early, don't process normal audio
@@ -5104,7 +5143,7 @@ void EnhancedAudioStrip::process(juce::AudioBuffer<float>& output,
             break;
         
         // Get smoothed values for this sample
-        float currentVol = smoothedVolume.getNextValue();
+        float currentVol = smoothedVolume.getNextValue() * outputGainScale;
         float currentPan = smoothedPan.getNextValue();
         float currentSpeed = smoothedSpeed.getNextValue();
         
@@ -7200,16 +7239,30 @@ void EnhancedAudioStrip::startStepSequencer()
 
 void EnhancedAudioStrip::retriggerStepVoice()
 {
+    retriggerStepVoiceAtColumn(currentStep % ModernAudioEngine::MaxColumns);
+}
+
+void EnhancedAudioStrip::retriggerStepVoiceAtColumn(int column)
+{
     juce::ScopedLock lock(bufferLock);
 
     if (playMode != PlayMode::Step || !playing)
         return;
 
     const int totalSteps = juce::jmax(1, getStepTotalSteps());
-    const int stepIndex = juce::jlimit(0, totalSteps - 1, currentStep);
+    const int pageCount = juce::jmax(1, (totalSteps + (ModernAudioEngine::MaxColumns - 1)) / ModernAudioEngine::MaxColumns);
+    const int currentPage = juce::jlimit(0, pageCount - 1, currentStep / ModernAudioEngine::MaxColumns);
+    int stepIndex = (currentPage * ModernAudioEngine::MaxColumns)
+        + juce::jlimit(0, ModernAudioEngine::MaxColumns - 1, column);
+    stepIndex = juce::jlimit(0, totalSteps - 1, stepIndex);
+    currentStep = stepIndex;
+    if (totalSteps > ModernAudioEngine::MaxColumns)
+        setStepPage(currentStep / ModernAudioEngine::MaxColumns);
+
+    stepSubdivisionTriggerIndex = 0;
+    stepSubdivisionSixteenth = std::numeric_limits<int64_t>::min();
+    stepSubdivisionGateOpen = stepPattern[static_cast<size_t>(stepIndex)];
     if (!stepPattern[static_cast<size_t>(stepIndex)])
-        return;
-    if (!stepSubdivisionGateOpen)
         return;
 
     stepSampler.triggerNote(getStepSubdivisionStartVelocityAtIndex(stepIndex));
@@ -7431,7 +7484,7 @@ void EnhancedAudioStrip::setSoundTouchEnabled(bool enabled)
     const int oldValue = soundTouchEnabled.exchange(newValue, std::memory_order_acq_rel);
     if (oldValue == newValue)
         return;
-#if MLRVST_ENABLE_SOUNDTOUCH
+#if STEPVSTHOST_ENABLE_SOUNDTOUCH
     invalidateSoundTouchSwingCache();
 #endif
 }
@@ -7603,7 +7656,7 @@ void EnhancedAudioStrip::ensureAnalogFiltersInitialized(FilterAlgorithm algorith
             case FilterAlgorithm::Ladder24:
                 return std::make_unique<StilsonMoog>(static_cast<float>(currentSampleRate));
             case FilterAlgorithm::MoogHuov:
-#if MLRVST_ENABLE_HUOVILAINEN
+#if STEPVSTHOST_ENABLE_HUOVILAINEN
                 return std::make_unique<HuovilainenMoog>(static_cast<float>(currentSampleRate));
 #else
                 return std::make_unique<StilsonMoog>(static_cast<float>(currentSampleRate));
@@ -7828,9 +7881,10 @@ double EnhancedAudioStrip::applySwingToPpq(double ppq) const
     const double pairBase = pairIndex * pairLength;
     const double pairPhase = ppq - pairBase; // [0..pairLength)
 
-    // More gradual onset in low range, still extreme near max.
+    // Keep swing expressive while preventing near-zero traversal slope that can
+    // visually look like a stuck playhead at very high swing.
     const double shapedSwing = std::pow(juce::jlimit(0.0, 1.0, swing), 1.7);
-    const double splitShift = juce::jlimit(0.0, 0.96, shapedSwing * 0.96);
+    const double splitShift = juce::jlimit(0.0, 0.72, shapedSwing * 0.72);
     const double splitPoint = unitBeats * (1.0 + splitShift);
 
     double swungPhase = pairPhase;
@@ -7886,6 +7940,13 @@ double EnhancedAudioStrip::getNormalizedPosition() const
 
 int EnhancedAudioStrip::getCurrentColumn() const
 {
+    if (playMode == PlayMode::Step)
+    {
+        const int totalSteps = juce::jmax(1, getStepTotalSteps());
+        const int stepIndex = juce::jlimit(0, totalSteps - 1, currentStep);
+        return juce::jlimit(0, ModernAudioEngine::MaxColumns - 1, stepIndex % ModernAudioEngine::MaxColumns);
+    }
+
     if (sampleLength <= 0.0)
         return juce::jlimit(0, ModernAudioEngine::MaxColumns - 1, triggerColumn);
 
@@ -7945,6 +8006,9 @@ int EnhancedAudioStrip::getCurrentColumn() const
 
 int EnhancedAudioStrip::getStutterEntryColumn() const
 {
+    if (playMode == PlayMode::Step)
+        return juce::jlimit(0, ModernAudioEngine::MaxColumns - 1, currentStep % ModernAudioEngine::MaxColumns);
+
     const int safeLoopStart = juce::jlimit(0, ModernAudioEngine::MaxColumns - 1, loopStart);
     const int safeLoopEnd = juce::jlimit(safeLoopStart + 1, ModernAudioEngine::MaxColumns, loopEnd);
     const int loopCols = juce::jmax(1, safeLoopEnd - safeLoopStart);
@@ -8693,6 +8757,16 @@ void ModernAudioEngine::processBlock(juce::AudioBuffer<float>& buffer,
 
         const int64_t segmentGlobalSample = blockStart + startSample;
         const auto segmentPosInfo = makeSegmentPositionInfo(startSample);
+        bool anyStripSolo = false;
+        for (size_t stripIdx = 0; stripIdx < static_cast<size_t>(MaxStrips); ++stripIdx)
+        {
+            auto* s = strips[stripIdx].get();
+            if (s != nullptr && s->isSolo())
+            {
+                anyStripSolo = true;
+                break;
+            }
+        }
 
         for (size_t i = 0; i < static_cast<size_t>(MaxStrips); ++i)
         {
@@ -8700,6 +8774,8 @@ void ModernAudioEngine::processBlock(juce::AudioBuffer<float>& buffer,
                 continue;
 
             auto* strip = strips[i].get();
+            const bool stripMutedBySolo = anyStripSolo && !strip->isSolo();
+            const bool stripMuted = strip->isMuted() || stripMutedBySolo;
             const bool stripIsStepMode = (strip->getPlayMode() == EnhancedAudioStrip::PlayMode::Step);
             auto* stepSampler = stripIsStepMode ? strip->getStepSampler() : nullptr;
             const int seqSlot = getActiveModSequencerSlot(static_cast<int>(i));
@@ -9034,22 +9110,23 @@ void ModernAudioEngine::processBlock(juce::AudioBuffer<float>& buffer,
             }
 
             int groupId = strip->getGroup();
+            float outputGainScale = stripMuted ? 0.0f : 1.0f;
             if (groupId >= 0 && groupId < MaxGroups && groups[static_cast<size_t>(groupId)])
             {
                 auto* group = groups[static_cast<size_t>(groupId)].get();
                 if (!group->isMuted())
                 {
-                    float groupVol = group->getVolume();
-                    float preGroupVol = strip->getVolume();
-                    strip->setVolume(preGroupVol * groupVol);
+                    outputGainScale *= group->getVolume();
+                    strip->setOutputGainMultiplier(outputGainScale);
                     strip->process(*targetBuffer, startSample, segmentSamples, segmentPosInfo, segmentGlobalSample, tempoNow, quantizeBeatsNow);
-                    strip->setVolume(preGroupVol);
                 }
             }
             else
             {
+                strip->setOutputGainMultiplier(outputGainScale);
                 strip->process(*targetBuffer, startSample, segmentSamples, segmentPosInfo, segmentGlobalSample, tempoNow, quantizeBeatsNow);
             }
+            strip->setOutputGainMultiplier(1.0f);
 
             if (applyParamMod)
             {
@@ -9365,7 +9442,7 @@ void ModernAudioEngine::processBlock(juce::AudioBuffer<float>& buffer,
 
                 if (stepRetriggerEvent)
                 {
-                    strip->retriggerStepVoice();
+                    strip->retriggerStepVoiceAtColumn(event.column);
                 }
                 else
                 {
@@ -10654,7 +10731,7 @@ void ModernAudioEngine::clearPattern(int patternIndex)
 
 void EnhancedAudioStrip::setStepPatternLengthSteps(int steps)
 {
-    const int clampedSteps = juce::jlimit(1, 64, steps);
+    const int clampedSteps = juce::jlimit(2, 64, steps);
     stepPatternLengthSteps.store(clampedSteps, std::memory_order_release);
 
     const int totalSteps = clampedSteps;

@@ -2,7 +2,7 @@
   ==============================================================================
 
     AudioEngine.h
-    Modern audio engine for mlrVST with advanced features
+    Modern audio engine for step-vsthost with advanced features
     
     Features:
     - High-quality resampling
@@ -32,8 +32,8 @@
 #include "StepSampler.h"
 #include "LadderFilterBase.h"
 
-#ifndef MLRVST_ENABLE_SOUNDTOUCH
-#define MLRVST_ENABLE_SOUNDTOUCH 0
+#ifndef STEPVSTHOST_ENABLE_SOUNDTOUCH
+#define STEPVSTHOST_ENABLE_SOUNDTOUCH 0
 #endif
 
 //==============================================================================
@@ -379,7 +379,7 @@ public:
     std::array<float, 64> stepSubdivisionStartVelocity = {};  // 0..1 gain for first substep hit
     std::array<float, 64> stepSubdivisionRepeatVelocity = {}; // 0..1 gain target for repeated substeps
     std::array<float, 64> stepProbability = {}; // 0..1 trigger chance per step
-    std::atomic<int> stepPatternLengthSteps{16}; // 1..64 absolute pattern length
+    std::atomic<int> stepPatternLengthSteps{16}; // 2..64 absolute pattern length
     std::atomic<int> stepViewPage{0};            // Visible 16-step page (0..ceil(steps/16)-1)
     std::atomic<float> stepEnvelopeAttackMs{0.0f};
     std::atomic<float> stepEnvelopeDecayMs{4000.0f};
@@ -457,8 +457,9 @@ public:
     // Step sequencer control
     void startStepSequencer();  // Start step sequencer playback (auto-runs with clock)
     void retriggerStepVoice();  // Retrigger currently active step voice without editing gates
+    void retriggerStepVoiceAtColumn(int column); // Retrigger and lock visible step playhead to a given grid column
     void setStepPatternLengthSteps(int steps);
-    int getStepPatternLengthSteps() const { return juce::jlimit(1, 64, stepPatternLengthSteps.load(std::memory_order_acquire)); }
+    int getStepPatternLengthSteps() const { return juce::jlimit(2, 64, stepPatternLengthSteps.load(std::memory_order_acquire)); }
     void setStepPatternBars(int bars);
     int getStepPatternBars() const { return juce::jmax(1, (getStepPatternLengthSteps() + 15) / 16); }
     int getStepTotalSteps() const { return getStepPatternLengthSteps(); }
@@ -503,11 +504,23 @@ public:
     // Parameters
     void setVolume(float vol);
     float getVolume() const { return volume.load(); }
+    void setOutputGainMultiplier(float gain)
+    {
+        outputGainMultiplier.store(juce::jlimit(0.0f, 4.0f, gain), std::memory_order_release);
+    }
+    float getOutputGainMultiplier() const
+    {
+        return outputGainMultiplier.load(std::memory_order_acquire);
+    }
     void setPan(float panValue); // -1.0 (left) to 1.0 (right)
     float getPan() const { return pan.load(); }
+    void setMuted(bool shouldMute) { muted.store(shouldMute ? 1 : 0, std::memory_order_release); }
+    bool isMuted() const { return muted.load(std::memory_order_acquire) != 0; }
+    void setSolo(bool shouldSolo) { solo.store(shouldSolo ? 1 : 0, std::memory_order_release); }
+    bool isSolo() const { return solo.load(std::memory_order_acquire) != 0; }
     void setPlayheadSpeedRatio(float ratio)
     {
-        playheadSpeedRatio.store(juce::jlimit(0.125f, 4.0f, ratio), std::memory_order_release);
+        playheadSpeedRatio.store(juce::jlimit(0.125f, 8.0f, ratio), std::memory_order_release);
     }
     float getPlayheadSpeedRatio() const { return playheadSpeedRatio.load(std::memory_order_acquire); }
     void setPlaybackSpeed(float speed);
@@ -751,7 +764,7 @@ private:
     };
 
     juce::AudioBuffer<float> sampleBuffer;
-#if MLRVST_ENABLE_SOUNDTOUCH
+#if STEPVSTHOST_ENABLE_SOUNDTOUCH
     juce::AudioBuffer<float> soundTouchSwingCacheBuffer;
     bool soundTouchSwingCacheValid = false;
     double soundTouchSwingCacheLoopStart = -1.0;
@@ -772,10 +785,13 @@ private:
     std::atomic<double> playbackPosition{0.0};
     std::atomic<float> playheadSpeedRatio{1.0f}; // Playmarker traversal multiplier (quantized musical ratios)
     std::atomic<double> playbackSpeed{1.0};
+    std::atomic<int> muted{0};
+    std::atomic<int> solo{0};
     double playheadTraversalRatioAtLastCalc = -1.0;
     double playheadTraversalPhaseOffsetSlices = 0.0;
     int playheadTraversalSliceCountAtLastCalc = -1;
     std::atomic<float> displaySpeedAtomic{1.0f};
+    std::atomic<float> outputGainMultiplier{1.0f};
     std::atomic<bool> playing{false};
     std::atomic<bool> pendingTrigger{false};
     std::atomic<int> resamplePitchEnabled{0};
@@ -1037,7 +1053,7 @@ public:
     float getPanGain(int channel) const; // 0=left, 1=right
     void rebuildTransientSliceMap();
     void rebuildSampleAnalysisCacheLocked();
-#if MLRVST_ENABLE_SOUNDTOUCH
+#if STEPVSTHOST_ENABLE_SOUNDTOUCH
     bool shouldUseSoundTouchSwingCache(double loopLength, double beatsForLoop, int loopCols,
                                        bool isScratching, double playheadTraversalRatio) const;
     bool rebuildSoundTouchSwingCache(double loopStartSamples, double loopLength, double beatsForLoop, int loopCols);

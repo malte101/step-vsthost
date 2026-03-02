@@ -10,8 +10,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Licensing-sensitive optional model:
 # OFF by default so release binaries do not accidentally include Huovilainen code.
-option(MLRVST_ENABLE_HUOVILAINEN "Enable Huovilainen Moog model (LGPL-derived upstream)" OFF)
-option(MLRVST_ENABLE_SOUNDTOUCH "Enable SoundTouch-based swing time-stretch path" ON)
+option(STEPVSTHOST_ENABLE_HUOVILAINEN "Enable Huovilainen Moog model (LGPL-derived upstream)" OFF)
+option(STEPVSTHOST_ENABLE_SOUNDTOUCH "Enable SoundTouch-based swing time-stretch path" ON)
 
 # Export compile commands for IDE support
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -36,11 +36,11 @@ endif()
 add_subdirectory(JUCE)
 
 # Plugin formats by platform
-set(MLRVST_PLUGIN_FORMATS VST3)
-set(MLRVST_AU_MAIN_TYPE_ARGS)
+set(STEPVSTHOST_PLUGIN_FORMATS VST3)
+set(STEPVSTHOST_AU_MAIN_TYPE_ARGS)
 if(APPLE)
-    list(APPEND MLRVST_PLUGIN_FORMATS AU)
-    list(APPEND MLRVST_AU_MAIN_TYPE_ARGS AU_MAIN_TYPE kAudioUnitType_MusicEffect)
+    list(APPEND STEPVSTHOST_PLUGIN_FORMATS AU)
+    list(APPEND STEPVSTHOST_AU_MAIN_TYPE_ARGS AU_MAIN_TYPE kAudioUnitType_MusicEffect)
 endif()
 
 # Plugin configuration
@@ -56,18 +56,18 @@ juce_add_plugin(step_vsthost
     PLUGIN_MANUFACTURER_CODE Stph
     PLUGIN_CODE Stvh
     
-    FORMATS ${MLRVST_PLUGIN_FORMATS}
+    FORMATS ${STEPVSTHOST_PLUGIN_FORMATS}
     
     PRODUCT_NAME "step-vsthost"
     
     VST3_CATEGORIES Fx Sampler
-    ${MLRVST_AU_MAIN_TYPE_ARGS}
+    ${STEPVSTHOST_AU_MAIN_TYPE_ARGS}
     
     # Bundle identifiers for macOS
     BUNDLE_ID "com.stepvsthost.plugin"
     
     # Description
-    DESCRIPTION "Modern mlr sample slicer with Monome support"
+    DESCRIPTION "Step sequencer VST host with Monome support"
     
     # Plugin channel configurations
     PLUGIN_CHANNEL_CONFIGURATIONS {2, 2}  # Stereo in, stereo out
@@ -114,32 +114,32 @@ target_compile_definitions(step_vsthost
         JUCE_PLUGINHOST_AU=1
 )
 
-if(MLRVST_ENABLE_HUOVILAINEN)
-    target_compile_definitions(step_vsthost PRIVATE MLRVST_ENABLE_HUOVILAINEN=1)
+if(STEPVSTHOST_ENABLE_HUOVILAINEN)
+    target_compile_definitions(step_vsthost PRIVATE STEPVSTHOST_ENABLE_HUOVILAINEN=1)
 else()
-    target_compile_definitions(step_vsthost PRIVATE MLRVST_ENABLE_HUOVILAINEN=0)
+    target_compile_definitions(step_vsthost PRIVATE STEPVSTHOST_ENABLE_HUOVILAINEN=0)
 endif()
 
-set(MLRVST_SOUNDTOUCH_ENABLED FALSE)
-if(MLRVST_ENABLE_SOUNDTOUCH)
-    find_path(MLRVST_SOUNDTOUCH_INCLUDE_DIR
+set(STEPVSTHOST_SOUNDTOUCH_ENABLED FALSE)
+if(STEPVSTHOST_ENABLE_SOUNDTOUCH)
+    find_path(STEPVSTHOST_SOUNDTOUCH_INCLUDE_DIR
         NAMES soundtouch/SoundTouch.h
         PATHS /opt/homebrew/include /usr/local/include)
-    find_library(MLRVST_SOUNDTOUCH_LIBRARY
+    find_library(STEPVSTHOST_SOUNDTOUCH_LIBRARY
         NAMES SoundTouch soundtouch
         PATHS /opt/homebrew/lib /usr/local/lib)
 
-    if(MLRVST_SOUNDTOUCH_INCLUDE_DIR AND MLRVST_SOUNDTOUCH_LIBRARY)
-        target_include_directories(step_vsthost SYSTEM PRIVATE "${MLRVST_SOUNDTOUCH_INCLUDE_DIR}")
-        target_link_libraries(step_vsthost PRIVATE "${MLRVST_SOUNDTOUCH_LIBRARY}")
-        target_compile_definitions(step_vsthost PRIVATE MLRVST_ENABLE_SOUNDTOUCH=1)
-        set(MLRVST_SOUNDTOUCH_ENABLED TRUE)
+    if(STEPVSTHOST_SOUNDTOUCH_INCLUDE_DIR AND STEPVSTHOST_SOUNDTOUCH_LIBRARY)
+        target_include_directories(step_vsthost SYSTEM PRIVATE "${STEPVSTHOST_SOUNDTOUCH_INCLUDE_DIR}")
+        target_link_libraries(step_vsthost PRIVATE "${STEPVSTHOST_SOUNDTOUCH_LIBRARY}")
+        target_compile_definitions(step_vsthost PRIVATE STEPVSTHOST_ENABLE_SOUNDTOUCH=1)
+        set(STEPVSTHOST_SOUNDTOUCH_ENABLED TRUE)
     else()
         message(WARNING "SoundTouch requested but not found; building with legacy swing path.")
-        target_compile_definitions(step_vsthost PRIVATE MLRVST_ENABLE_SOUNDTOUCH=0)
+        target_compile_definitions(step_vsthost PRIVATE STEPVSTHOST_ENABLE_SOUNDTOUCH=0)
     endif()
 else()
-    target_compile_definitions(step_vsthost PRIVATE MLRVST_ENABLE_SOUNDTOUCH=0)
+    target_compile_definitions(step_vsthost PRIVATE STEPVSTHOST_ENABLE_SOUNDTOUCH=0)
 endif()
 
 # Link libraries
@@ -169,7 +169,7 @@ if(APPLE)
     target_compile_definitions(step_vsthost PRIVATE JUCE_MAC=1)
     
     # Code signing (optional)
-    # set_target_properties(mlrVST_VST3 PROPERTIES
+    # set_target_properties(step_vsthost_VST3 PROPERTIES
     #     XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Developer ID Application"
     #     XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "YOUR_TEAM_ID"
     # )
@@ -240,15 +240,15 @@ install(TARGETS step_vsthost
 )
 
 if(APPLE)
-    set(MLRVST_MAC_INSTALL_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/install_macos_plugins.sh")
-    if(EXISTS "${MLRVST_MAC_INSTALL_SCRIPT}")
+    set(STEPVSTHOST_MAC_INSTALL_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/install_macos_plugins.sh")
+    if(EXISTS "${STEPVSTHOST_MAC_INSTALL_SCRIPT}")
         add_custom_target(install_plugins_user
-            COMMAND "${MLRVST_MAC_INSTALL_SCRIPT}" --user --build-dir "${CMAKE_BINARY_DIR}"
+            COMMAND "${STEPVSTHOST_MAC_INSTALL_SCRIPT}" --user --build-dir "${CMAKE_BINARY_DIR}"
             USES_TERMINAL
             COMMENT "Install step-vsthost plugin bundles to user plugin folders")
 
         add_custom_target(install_plugins_system
-            COMMAND "${MLRVST_MAC_INSTALL_SCRIPT}" --system --build-dir "${CMAKE_BINARY_DIR}"
+            COMMAND "${STEPVSTHOST_MAC_INSTALL_SCRIPT}" --system --build-dir "${CMAKE_BINARY_DIR}"
             USES_TERMINAL
             COMMENT "Install step-vsthost plugin bundles to system plugin folders (sudo may prompt)")
     endif()
@@ -262,8 +262,8 @@ message(STATUS "═════════════════════�
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ Standard: C++${CMAKE_CXX_STANDARD}")
 message(STATUS "  System: ${CMAKE_SYSTEM_NAME}")
-message(STATUS "  Huovilainen model: ${MLRVST_ENABLE_HUOVILAINEN}")
-message(STATUS "  SoundTouch swing path: ${MLRVST_SOUNDTOUCH_ENABLED}")
+message(STATUS "  Huovilainen model: ${STEPVSTHOST_ENABLE_HUOVILAINEN}")
+message(STATUS "  SoundTouch swing path: ${STEPVSTHOST_SOUNDTOUCH_ENABLED}")
 message(STATUS "")
 message(STATUS "Plugin Formats:")
 message(STATUS "  ✓ VST3")

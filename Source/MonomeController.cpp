@@ -43,7 +43,7 @@ int stutterColumnFromMask(uint8_t mask)
 }
 }
 
-void MlrVSTAudioProcessor::resetStepEditVelocityGestures()
+void StepVstHostAudioProcessor::resetStepEditVelocityGestures()
 {
     stepEditVelocityGestureActive.fill(false);
     stepEditVelocityGestureStrip.fill(0);
@@ -54,7 +54,7 @@ void MlrVSTAudioProcessor::resetStepEditVelocityGestures()
     stepEditVelocityGestureLastActivityMs.fill(0);
 }
 
-void MlrVSTAudioProcessor::setMomentaryScratchHold(bool shouldEnable)
+void StepVstHostAudioProcessor::setMomentaryScratchHold(bool shouldEnable)
 {
     if (!audioEngine)
         return;
@@ -102,7 +102,7 @@ void MlrVSTAudioProcessor::setMomentaryScratchHold(bool shouldEnable)
     }
 }
 
-void MlrVSTAudioProcessor::setMomentaryStutterHold(bool shouldEnable)
+void StepVstHostAudioProcessor::setMomentaryStutterHold(bool shouldEnable)
 {
     if (!audioEngine)
         return;
@@ -272,7 +272,7 @@ void MlrVSTAudioProcessor::setMomentaryStutterHold(bool shouldEnable)
     pendingStutterReleaseActive.store(1, std::memory_order_release);
 }
 
-void MlrVSTAudioProcessor::performMomentaryStutterStartNow(double hostPpqNow, int64_t nowSample)
+void StepVstHostAudioProcessor::performMomentaryStutterStartNow(double hostPpqNow, int64_t nowSample)
 {
     juce::ignoreUnused(nowSample);
 
@@ -303,8 +303,16 @@ void MlrVSTAudioProcessor::performMomentaryStutterStartNow(double hostPpqNow, in
         momentaryStutterStripArmed[idx] = false;
         const bool stepMode = (strip && strip->getPlayMode() == EnhancedAudioStrip::PlayMode::Step);
         const bool hasStepAudio = stepMode && strip->getStepSampler() && strip->getStepSampler()->getHasAudio();
-        const bool hasPlayableContent = (strip && (strip->hasAudio() || hasStepAudio));
-        if (!strip || !hasPlayableContent || !strip->isPlaying())
+        const bool hasPlayableContent = (strip && (stepMode || strip->hasAudio() || hasStepAudio));
+        if (!strip || !hasPlayableContent)
+        {
+            audioEngine->setMomentaryStutterStrip(i, 0, 0.0, false);
+            continue;
+        }
+
+        if (stepMode && !strip->isPlaying())
+            strip->startStepSequencer();
+        if (!stepMode && !strip->isPlaying())
         {
             audioEngine->setMomentaryStutterStrip(i, 0, 0.0, false);
             continue;
@@ -324,7 +332,7 @@ void MlrVSTAudioProcessor::performMomentaryStutterStartNow(double hostPpqNow, in
     pendingStutterStartSampleTarget.store(-1, std::memory_order_release);
 }
 
-void MlrVSTAudioProcessor::performMomentaryStutterReleaseNow(double hostPpqNow, int64_t nowSample)
+void StepVstHostAudioProcessor::performMomentaryStutterReleaseNow(double hostPpqNow, int64_t nowSample)
 {
     if (!audioEngine)
         return;
@@ -352,7 +360,7 @@ void MlrVSTAudioProcessor::performMomentaryStutterReleaseNow(double hostPpqNow, 
     }
 }
 
-void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
+void StepVstHostAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
 {
     if (!audioEngine) return;
 
@@ -394,17 +402,212 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
     {
         return (gridY * PresetColumns) + gridX;
     };
+    const auto isSubPresetTopCell = [](int gridX, int gridY)
+    {
+        return gridY == 0 && gridX >= 0 && gridX < SubPresetSlots;
+    };
     const bool presetModeActive = (controlModeActive && currentControlMode == ControlMode::Preset);
     const bool stepEditModeActive = (controlModeActive && currentControlMode == ControlMode::StepEdit);
+    const bool topRowSubPresetMode =
+        presetModeActive || (!controlModeActive || currentControlMode == ControlMode::Normal);
+    const auto canUseTopRowStutter = [&]() -> bool
+    {
+        if (stepEditModeActive || presetModeActive)
+            return false;
+        if (!controlModeActive)
+            return true;
+        return currentControlMode != ControlMode::BeatSpace
+            && currentControlMode != ControlMode::Filter
+            && currentControlMode != ControlMode::Modulation;
+    };
     
     static int loopSetFirstButton = -1;
     static int loopSetStrip = -1;
+    const auto computeTwoButtonLoopRange = [&](int firstButton,
+                                               int secondButton,
+                                               bool shouldReverse,
+                                               int& outStart,
+                                               int& outEnd)
+    {
+        const int clampedFirst = juce::jlimit(0, MaxColumns - 1, firstButton);
+        const int clampedSecond = juce::jlimit(0, MaxColumns - 1, secondButton);
+        int start = juce::jmin(clampedFirst, clampedSecond);
+        int end = juce::jmax(clampedFirst, clampedSecond) + 1;
+
+        // Enforce a minimum loop of two steps.
+        const int minLoopColumns = juce::jlimit(1, MaxColumns, 2);
+        int length = juce::jmax(1, end - start);
+        if (length < minLoopColumns)
+        {
+            if (shouldReverse)
+            {
+                end = clampedFirst + 1;
+                start = end - minLoopColumns;
+            }
+            else
+            {
+                start = clampedFirst;
+                end = start + minLoopColumns;
+            }
+
+            if (start < 0)
+            {
+                end -= start;
+                start = 0;
+            }
+            if (end > MaxColumns)
+            {
+                const int overflow = end - MaxColumns;
+                start -= overflow;
+                end = MaxColumns;
+            }
+
+            start = juce::jlimit(0, MaxColumns - 1, start);
+            end = juce::jlimit(start + 1, MaxColumns, end);
+            length = juce::jmax(1, end - start);
+            if (length < minLoopColumns)
+            {
+                if (start == 0)
+                    end = juce::jmin(MaxColumns, minLoopColumns);
+                else
+                    start = juce::jmax(0, MaxColumns - minLoopColumns);
+                end = juce::jlimit(start + 1, MaxColumns, juce::jmax(start + minLoopColumns, end));
+            }
+        }
+
+        // Global inner-loop size divisor:
+        // 1, 1/2, 1/4, 1/8, 1/16 where 1 keeps legacy behavior.
+        const float loopLengthFactor = juce::jlimit(0.0625f, 1.0f, getInnerLoopLengthFactor());
+        if (loopLengthFactor < 0.999f)
+        {
+            const int originalLength = juce::jmax(1, end - start);
+            const int scaledLength = juce::jmax(1, static_cast<int>(
+                std::floor(static_cast<double>(originalLength) * static_cast<double>(loopLengthFactor))));
+
+            if (shouldReverse)
+            {
+                end = juce::jlimit(1, MaxColumns, clampedFirst + 1);
+                start = juce::jmax(0, end - scaledLength);
+            }
+            else
+            {
+                start = clampedFirst;
+                end = juce::jmin(MaxColumns, start + scaledLength);
+            }
+        }
+
+        outStart = juce::jlimit(0, MaxColumns - 1, start);
+        outEnd = juce::jlimit(outStart + 1, MaxColumns, end);
+
+        if ((outEnd - outStart) < minLoopColumns)
+        {
+            if (shouldReverse)
+            {
+                outEnd = juce::jlimit(1, MaxColumns, clampedFirst + 1);
+                outStart = juce::jmax(0, outEnd - minLoopColumns);
+            }
+            else
+            {
+                outStart = juce::jlimit(0, MaxColumns - minLoopColumns, clampedFirst);
+                outEnd = juce::jmin(MaxColumns, outStart + minLoopColumns);
+            }
+        }
+    };
     
     if (state == 1) // Key down
     {
-        // GROUP ROW (y=0): Groups 0-3 + Pattern Recorders 4-7
+        // GROUP ROW (y=0): Sub-presets in cols 0-3, mode-specific utilities in higher cols.
         if (y == GROUP_ROW)
         {
+            if (topRowSubPresetMode && isSubPresetTopCell(x, y))
+            {
+                const int subSlot = juce::jlimit(0, SubPresetSlots - 1, x);
+                const uint32_t nowMs = juce::Time::getMillisecondCounter();
+                constexpr uint32_t kSubPresetSequenceHoldMs = 140;
+                const bool anyHeldBefore =
+                    std::any_of(subPresetPadHeld.begin(), subPresetPadHeld.end(),
+                                [](bool v) { return v; });
+                bool qualifiesForSequence = false;
+                if (anyHeldBefore)
+                {
+                    for (int i = 0; i < SubPresetSlots; ++i)
+                    {
+                        const auto idx = static_cast<size_t>(i);
+                        if (!subPresetPadHeld[idx])
+                            continue;
+                        const uint32_t heldMs = nowMs - subPresetPadPressStartMs[idx];
+                        if (heldMs >= kSubPresetSequenceHoldMs)
+                        {
+                            qualifiesForSequence = true;
+                            break;
+                        }
+                    }
+                }
+
+                subPresetPadHeld[static_cast<size_t>(subSlot)] = true;
+                subPresetPadHoldSaveTriggered[static_cast<size_t>(subSlot)] = false;
+                subPresetPadPressStartMs[static_cast<size_t>(subSlot)] = nowMs;
+
+                const int mainPresetIndex = getActiveMainPresetIndexForSubPresets();
+                const int previousSubSlot = juce::jlimit(0, SubPresetSlots - 1, activeSubPresetSlot);
+                activeMainPresetIndex = mainPresetIndex;
+                activeSubPresetSlot = subSlot;
+                ensureSubPresetsInitializedForMainPreset(mainPresetIndex);
+
+                if (!anyHeldBefore || !qualifiesForSequence)
+                {
+                    if (previousSubSlot != subSlot)
+                    {
+                        // Keep last edited state on slot change so toggling
+                        // back recalls the previous pattern/state reliably.
+                        saveSubPresetForMainPreset(mainPresetIndex, previousSubSlot);
+                    }
+
+                    for (int i = 0; i < SubPresetSlots; ++i)
+                    {
+                        if (i == subSlot)
+                            continue;
+                        const auto idx = static_cast<size_t>(i);
+                        subPresetPadHeld[idx] = false;
+                        subPresetPadHoldSaveTriggered[idx] = false;
+                    }
+                    subPresetSequenceSlots.clear();
+                    subPresetSequenceSlots.push_back(subSlot);
+                    subPresetSequenceActive = false;
+                    if (pendingSubPresetRecall.sequenceDriven)
+                    {
+                        pendingSubPresetRecall.active = false;
+                        pendingSubPresetRecall.targetResolved = false;
+                        pendingSubPresetRecall.sequenceDriven = false;
+                    }
+                    pendingSubPresetApplyMainPreset.store(-1, std::memory_order_release);
+                    pendingSubPresetApplySlot.store(-1, std::memory_order_release);
+                    requestSubPresetRecallQuantized(mainPresetIndex, subSlot, false);
+                }
+                else
+                {
+                    if (std::find(subPresetSequenceSlots.begin(), subPresetSequenceSlots.end(), subSlot)
+                        == subPresetSequenceSlots.end())
+                    {
+                        subPresetSequenceSlots.push_back(subSlot);
+                    }
+
+                    if (subPresetSequenceSlots.size() >= 2)
+                    {
+                        subPresetSequenceActive = true;
+                        pendingSubPresetRecall.sequenceDriven = true;
+                        if (!pendingSubPresetRecall.active)
+                        {
+                            requestSubPresetRecallQuantized(
+                                mainPresetIndex, subPresetSequenceSlots.front(), true);
+                        }
+                    }
+                }
+
+                updateMonomeLEDs();
+                return;
+            }
+
             if (presetModeActive && isPresetCell(x, y))
             {
                 const int presetIndex = toPresetIndex(x, y);
@@ -506,18 +709,90 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                 return;
             }
 
+            if (controlModeActive && currentControlMode == ControlMode::BeatSpace)
+            {
+                const auto beatState = getBeatSpaceVisualState();
+                if (x >= 0 && x < BeatSpaceChannels)
+                {
+                    if (beatState.mappedChannels > 0 && !beatState.channelMapped[static_cast<size_t>(x)])
+                    {
+                        updateMonomeLEDs();
+                        return;
+                    }
+                    beatSpaceSelectChannel(x);
+                    updateMonomeLEDs();
+                    return;
+                }
+                if (x == 8)
+                {
+                    beatSpaceSetLinkAllChannels(!beatState.linkAllChannels);
+                    updateMonomeLEDs();
+                    return;
+                }
+                if (x == 9)
+                {
+                    beatSpaceRandomizeSelection();
+                    updateMonomeLEDs();
+                    return;
+                }
+                if (x == 10)
+                {
+                    beatSpaceAdjustZoom(-1);
+                    updateMonomeLEDs();
+                    return;
+                }
+                if (x == 11)
+                {
+                    beatSpaceAdjustZoom(1);
+                    updateMonomeLEDs();
+                    return;
+                }
+                if (x == 12)
+                {
+                    beatSpacePan(-1, 0);
+                    updateMonomeLEDs();
+                    return;
+                }
+                if (x == 13)
+                {
+                    beatSpacePan(1, 0);
+                    updateMonomeLEDs();
+                    return;
+                }
+                if (x == 14)
+                {
+                    beatSpacePan(0, -1);
+                    updateMonomeLEDs();
+                    return;
+                }
+                if (x == 15)
+                {
+                    beatSpacePan(0, 1);
+                    updateMonomeLEDs();
+                    return;
+                }
+                if (x >= 0 && x < 8)
+                {
+                    updateMonomeLEDs();
+                    return;
+                }
+            }
+
             // In Monome control-page modes, top row is reserved/disabled except Modulation.
             // This prevents accidental access to group/pattern/scratch/transient controls.
             if (controlModeActive
                 && currentControlMode != ControlMode::Normal
                 && currentControlMode != ControlMode::Modulation
-                && currentControlMode != ControlMode::Filter)
+                && currentControlMode != ControlMode::Filter
+                && currentControlMode != ControlMode::BeatSpace)
             {
-                return;
+                // Keep row-0 scratch/stutter available on mix-style pages.
+                if (x < 8 || !canUseTopRowStutter())
+                    return;
             }
 
             // Row 0 col 8: original momentary scratch hold.
-            if (x == 8 && (!controlModeActive || currentControlMode == ControlMode::Normal))
+            if (x == 8 && canUseTopRowStutter())
             {
                 setMomentaryScratchHold(true);
                 updateMonomeLEDs();
@@ -526,7 +801,7 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
 
             // Row 0, cols 9-15: momentary stutter rates (timeline-synced):
             // 9=1/4 ... 15=1/64.
-            if (x >= 9 && x <= 15 && (!controlModeActive || currentControlMode == ControlMode::Normal))
+            if (x >= 9 && x <= 15 && canUseTopRowStutter())
             {
                 const uint8_t bit = stutterButtonBitForColumn(x);
                 if (bit != 0)
@@ -603,85 +878,11 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                 return;
             }
             
-            // NORMAL MODE: Columns 0-3 = Group mute/unmute
-            if (x < 4)
+            // Top-row cols 4-7 are intentionally unused (pattern recorder removed).
+            if (x >= 4 && x <= 7)
             {
-                auto* group = audioEngine->getGroup(x);
-                if (group)
-                {
-                    // Toggle mute state
-                    bool wasMuted = group->isMuted();
-                    group->setMuted(!wasMuted);
-                    
-                    // If we just muted, stop all strips in the group
-                    if (!wasMuted)  // Was playing, now muted
-                    {
-                        auto strips = group->getStrips();
-                        for (int stripIdx : strips)
-                        {
-                            if (auto* strip = audioEngine->getStrip(stripIdx))
-                                strip->stop(false);
-                        }
-                    }
-                    else // Was muted, now unmuted: resume group strips in PPQ sync
-                    {
-                        const double restartTimelineBeat = audioEngine->getTimelineBeat();
-                        const double restartTempo = audioEngine->getCurrentTempo();
-                        const int64_t restartGlobalSample = audioEngine->getGlobalSampleCount();
-                        const auto& strips = group->getStrips();
-                        for (int stripIdx : strips)
-                        {
-                            if (auto* strip = audioEngine->getStrip(stripIdx))
-                            {
-                                if (!strip->hasAudio())
-                                    continue;
-
-                                const int restartColumn = juce::jlimit(0, 15, strip->getCurrentColumn());
-                                if (strip->getPlayMode() == EnhancedAudioStrip::PlayMode::Step)
-                                {
-                                    // Step mode follows global clock directly.
-                                    strip->startStepSequencer();
-                                    continue;
-                                }
-
-                                strip->restorePresetPpqState(true,
-                                                             strip->isPpqTimelineAnchored(),
-                                                             strip->getPpqTimelineOffsetBeats(),
-                                                             restartColumn,
-                                                             restartTempo,
-                                                             restartTimelineBeat,
-                                                             restartGlobalSample);
-                            }
-                        }
-                    }
-                }
-            }
-            // Columns 4-7: Pattern recorders (manual stop with auto-quantized length)
-            else if (x >= 4 && x <= 7)
-            {
-                int patternIndex = x - 4;  // 0-3 for patterns 0-3
-                auto* pattern = audioEngine->getPattern(patternIndex);
-                if (pattern)
-                {
-                    DBG("Monome pattern button " << patternIndex << " pressed");
-                    
-                    if (pattern->isRecording())
-                    {
-                        // Stop/quantize/play behavior is handled centrally in audio engine.
-                        audioEngine->stopPatternRecording(patternIndex);
-                    }
-                    else if (pattern->isPlaying())
-                    {
-                        // Stop playback
-                        DBG("  Stopping playback");
-                        pattern->stopPlayback();
-                    }
-                    else
-                    {
-                        // Start recording with max duration; manual stop quantizes to bars.
-                        audioEngine->startPatternRecording(patternIndex);
-                    }
-                }
+                updateMonomeLEDs();
+                return;
             }
         }
         // CONTROL ROW - Mode buttons
@@ -909,6 +1110,10 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                     case StepEditTool::Divide:
                     {
                         setStepEnabled(absoluteStep, true);
+                        if (!targetStrip->isPlaying())
+                            targetStrip->startStepSequencer();
+                        if (targetStrip->getStepProbabilityAtIndex(absoluteStep) <= 0.001f)
+                            targetStrip->setStepProbabilityAtIndex(absoluteStep, 1.0f);
                         const int maxSubs = juce::jmax(2, EnhancedAudioStrip::MaxStepSubdivisions);
                         // Map row value directly to the visible subdivision scale.
                         // (Old mapping had a +2 bias that made low values feel offset.)
@@ -918,12 +1123,28 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                             1 + static_cast<int>(std::round(rowValue
                                 * static_cast<float>(juce::jmax(1, maxSubs - 1)))));
                         targetStrip->setStepSubdivisionAtIndex(absoluteStep, subdivisions);
+
+                        const float baseStart = targetStrip->getStepSubdivisionStartVelocityAtIndex(absoluteStep);
+                        const float baseEnd = targetStrip->getStepSubdivisionRepeatVelocityAtIndex(absoluteStep);
+                        if (juce::jmax(baseStart, baseEnd) < 0.001f)
+                        {
+                            const float defaultVelocity =
+                                juce::jlimit(0.25f, 1.0f, 0.35f + (0.65f * rowValue));
+                            targetStrip->setStepSubdivisionVelocityRangeAtIndex(
+                                absoluteStep,
+                                defaultVelocity,
+                                defaultVelocity);
+                        }
                         break;
                     }
 
                     case StepEditTool::RampUp:
                     {
                         setStepEnabled(absoluteStep, true);
+                        if (!targetStrip->isPlaying())
+                            targetStrip->startStepSequencer();
+                        if (targetStrip->getStepProbabilityAtIndex(absoluteStep) <= 0.001f)
+                            targetStrip->setStepProbabilityAtIndex(absoluteStep, 1.0f);
                         if (rowValue <= 0.001f)
                             targetStrip->setStepSubdivisionAtIndex(absoluteStep, 2);
                         else if (targetStrip->getStepSubdivisionAtIndex(absoluteStep) <= 1)
@@ -945,6 +1166,10 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                     case StepEditTool::RampDown:
                     {
                         setStepEnabled(absoluteStep, true);
+                        if (!targetStrip->isPlaying())
+                            targetStrip->startStepSequencer();
+                        if (targetStrip->getStepProbabilityAtIndex(absoluteStep) <= 0.001f)
+                            targetStrip->setStepProbabilityAtIndex(absoluteStep, 1.0f);
                         if (rowValue <= 0.001f)
                             targetStrip->setStepSubdivisionAtIndex(absoluteStep, 2);
                         else if (targetStrip->getStepSubdivisionAtIndex(absoluteStep) <= 1)
@@ -985,8 +1210,7 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
             int stripIndex = y - FIRST_STRIP_ROW;
             if (stripIndex >= 0 && stripIndex < visibleStripCount && x < MaxColumns)
             {
-                if (!(controlModeActive && (currentControlMode == ControlMode::GrainSize
-                    || currentControlMode == ControlMode::Modulation)))
+                if (!(controlModeActive && currentControlMode == ControlMode::Modulation))
                     lastMonomePressedStripRow.store(stripIndex, std::memory_order_release);
                 auto* strip = audioEngine->getStrip(stripIndex);
                 if (!strip) 
@@ -1006,35 +1230,11 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                 {
                     const int firstButton = juce::jlimit(0, MaxColumns - 1, loopSetFirstButton);
                     const int secondButton = juce::jlimit(0, MaxColumns - 1, x);
-                    int start = juce::jmin(firstButton, secondButton);
-                    int end = juce::jmax(firstButton, secondButton) + 1;
-
                     // Detect reverse: first button > second button
                     const bool shouldReverse = (firstButton > secondButton);
-
-                    // Global inner-loop size divisor:
-                    // 1, 1/2, 1/4, 1/8, 1/16 where 1 keeps legacy behavior.
-                    const float loopLengthFactor = juce::jlimit(0.0625f, 1.0f, getInnerLoopLengthFactor());
-                    if (loopLengthFactor < 0.999f)
-                    {
-                        const int originalLength = juce::jmax(1, end - start);
-                        const int scaledLength = juce::jmax(1, static_cast<int>(
-                            std::floor(static_cast<double>(originalLength) * static_cast<double>(loopLengthFactor))));
-
-                        if (shouldReverse)
-                        {
-                            end = juce::jlimit(1, MaxColumns, firstButton + 1);
-                            start = juce::jmax(0, end - scaledLength);
-                        }
-                        else
-                        {
-                            start = firstButton;
-                            end = juce::jmin(MaxColumns, start + scaledLength);
-                        }
-
-                        start = juce::jlimit(0, MaxColumns - 1, start);
-                        end = juce::jlimit(start + 1, MaxColumns, end);
-                    }
+                    int start = 0;
+                    int end = MaxColumns;
+                    computeTwoButtonLoopRange(firstButton, secondButton, shouldReverse, start, end);
                     
                     queueLoopChange(stripIndex, false, start, end, shouldReverse);
                     
@@ -1063,6 +1263,36 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                     {
                         MonomeMixActions::handleButtonPress(*this, *strip, stripIndex, x, static_cast<int>(currentControlMode));
                     }
+                    else if (currentControlMode == ControlMode::Length)
+                    {
+                        const int clampedColumn = juce::jlimit(0, MaxColumns - 1, x);
+                        if (strip->getPlayMode() != EnhancedAudioStrip::PlayMode::Step)
+                        {
+                            // Two-button loop-set gesture in Length mode for non-step strips:
+                            // press/hold first column, then press second to define range.
+                            if (loopSetFirstButton >= 0 && loopSetStrip == stripIndex)
+                            {
+                                const int firstButton = juce::jlimit(0, MaxColumns - 1, loopSetFirstButton);
+                                const int secondButton = clampedColumn;
+                                const bool shouldReverse = (firstButton > secondButton);
+                                int start = 0;
+                                int end = MaxColumns;
+                                computeTwoButtonLoopRange(firstButton, secondButton, shouldReverse, start, end);
+                                queueLoopChange(stripIndex, false, start, end, shouldReverse);
+                                loopSetFirstButton = -1;
+                                loopSetStrip = -1;
+                            }
+                            else
+                            {
+                                loopSetFirstButton = clampedColumn;
+                                loopSetStrip = stripIndex;
+                            }
+                        }
+                        else
+                        {
+                            MonomeMixActions::handleButtonPress(*this, *strip, stripIndex, x, static_cast<int>(currentControlMode));
+                        }
+                    }
                     else if (currentControlMode == ControlMode::Swing)
                     {
                         MonomeMixActions::handleButtonPress(*this, *strip, stripIndex, x, static_cast<int>(currentControlMode));
@@ -1071,12 +1301,6 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                     {
                         MonomeMixActions::handleButtonPress(*this, *strip, stripIndex, x, static_cast<int>(currentControlMode));
                     }
-                    else if (currentControlMode == ControlMode::GrainSize)
-                    {
-                        const int targetStripIndex = clampVisibleStrip(getLastMonomePressedStripRow());
-                        if (auto* targetStrip = audioEngine->getStrip(targetStripIndex))
-                            MonomeMixActions::handleGrainPageButtonPress(*targetStrip, stripIndex, x);
-                    }
                     else if (currentControlMode == ControlMode::Filter)
                     {
                         MonomeFilterActions::handleButtonPress(*strip, x, static_cast<int>(filterSubPage));
@@ -1084,6 +1308,18 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                     else if (currentControlMode == ControlMode::FileBrowser)
                     {
                         MonomeFileBrowserActions::handleButtonPress(*this, *strip, stripIndex, x);
+                    }
+                    else if (currentControlMode == ControlMode::BeatSpace)
+                    {
+                        const int activeGridWidth = juce::jlimit(1, MaxColumns, getMonomeGridWidth());
+                        const int gridRows = juce::jmax(1, CONTROL_ROW - FIRST_STRIP_ROW);
+                        const int localY = juce::jlimit(0, gridRows - 1, y - FIRST_STRIP_ROW);
+                        beatSpaceSetPointFromGridCell(
+                            juce::jlimit(0, activeGridWidth - 1, x),
+                            localY,
+                            activeGridWidth,
+                            gridRows);
+                        updateMonomeLEDs();
                     }
                     else if (currentControlMode == ControlMode::GroupAssign)
                     {
@@ -1109,7 +1345,7 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                 else
                 {
                     // Normal playback trigger:
-                    // - Loop/Grain/Gate: requires loaded strip audio
+                    // - Loop/Gate: requires loaded strip audio
                     // - Step mode: allow direct step toggling on main page
                     const bool canTriggerFromMainPage = (strip->getPlayMode() == EnhancedAudioStrip::PlayMode::Step)
                         || strip->hasAudio();
@@ -1138,6 +1374,34 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
     }
     else if (state == 0) // Key up
     {
+        if (topRowSubPresetMode && isSubPresetTopCell(x, y))
+        {
+            const int subSlot = juce::jlimit(0, SubPresetSlots - 1, x);
+            subPresetPadHeld[static_cast<size_t>(subSlot)] = false;
+            subPresetPadHoldSaveTriggered[static_cast<size_t>(subSlot)] = false;
+
+            const bool anyHeld =
+                std::any_of(subPresetPadHeld.begin(), subPresetPadHeld.end(),
+                            [](bool v) { return v; });
+            if (!anyHeld)
+            {
+                const bool wasSequenceDriven = subPresetSequenceActive || pendingSubPresetRecall.sequenceDriven;
+                subPresetSequenceActive = false;
+                subPresetSequenceSlots.clear();
+                if (wasSequenceDriven)
+                {
+                    pendingSubPresetRecall.active = false;
+                    pendingSubPresetRecall.targetResolved = false;
+                    pendingSubPresetRecall.sequenceDriven = false;
+                    pendingSubPresetApplyMainPreset.store(-1, std::memory_order_release);
+                    pendingSubPresetApplySlot.store(-1, std::memory_order_release);
+                }
+            }
+
+            updateMonomeLEDs();
+            return;
+        }
+
         if (presetModeActive && isPresetCell(x, y))
         {
             const int presetIndex = toPresetIndex(x, y);
@@ -1185,13 +1449,17 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
             return;
         }
 
-        if (y == GROUP_ROW && x == 8)
+        if (y == GROUP_ROW && x == 8
+            && (canUseTopRowStutter() || momentaryScratchHoldActive))
         {
             setMomentaryScratchHold(false);
             updateMonomeLEDs();
             return;
         }
-        if (y == GROUP_ROW && x >= 9 && x <= 15)
+        if (y == GROUP_ROW && x >= 9 && x <= 15
+            && (canUseTopRowStutter()
+                || momentaryStutterHoldActive
+                || momentaryStutterButtonMask.load(std::memory_order_acquire) != 0))
         {
             const uint8_t bit = stutterButtonBitForColumn(x);
             uint8_t currentMask = momentaryStutterButtonMask.load(std::memory_order_acquire);
@@ -1226,7 +1494,8 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
         if (y >= FIRST_STRIP_ROW && y < CONTROL_ROW)
         {
             int stripIndex = y - FIRST_STRIP_ROW;
-            if (stripIndex >= 0 && stripIndex < visibleStripCount && x < MaxColumns)
+            if (stripIndex >= 0 && stripIndex < visibleStripCount && x < MaxColumns
+                && !(controlModeActive && currentControlMode == ControlMode::BeatSpace))
             {
                 auto* strip = audioEngine->getStrip(stripIndex);
                 if (strip)
@@ -1237,8 +1506,11 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
             }
         }
         
-        // Handle gate mode - stop strip on key release
-        if (y >= FIRST_STRIP_ROW && y < CONTROL_ROW)
+        // Handle gate mode - stop strip on key release (gate page only).
+        if (controlModeActive
+            && currentControlMode == ControlMode::Gate
+            && y >= FIRST_STRIP_ROW
+            && y < CONTROL_ROW)
         {
             int stripIndex = y - FIRST_STRIP_ROW;
             if (stripIndex >= 0 && stripIndex < visibleStripCount && x < MaxColumns)
@@ -1276,7 +1548,7 @@ void MlrVSTAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
     
     updateMonomeLEDs();
 }
-void MlrVSTAudioProcessor::updateMonomeLEDs()
+void StepVstHostAudioProcessor::updateMonomeLEDs()
 {
     if (!monomeConnection.isConnected() || !audioEngine || !monomeConnection.supportsGrid())
         return;
@@ -1312,6 +1584,12 @@ void MlrVSTAudioProcessor::updateMonomeLEDs()
     const bool metroPulseOn = beatPhase < 0.22;                    // Short pulse at each beat
     const int beatIndexInBar = juce::jmax(0, static_cast<int>(std::floor(beatNow)) % 4);
     const bool metroDownbeat = (beatIndexInBar == 0);
+    const bool topRowStutterVisible = !controlModeActive
+        || (currentControlMode != ControlMode::BeatSpace
+            && currentControlMode != ControlMode::Filter
+            && currentControlMode != ControlMode::Modulation
+            && currentControlMode != ControlMode::StepEdit
+            && currentControlMode != ControlMode::Preset);
     const auto nowMs = juce::Time::getMillisecondCounter();
 
     if (controlModeActive && currentControlMode == ControlMode::FileBrowser)
@@ -1346,6 +1624,8 @@ void MlrVSTAudioProcessor::updateMonomeLEDs()
 
     if (controlModeActive && currentControlMode == ControlMode::Preset)
     {
+        const int activeMainPreset = getActiveMainPresetIndexForSubPresets();
+
         for (int y = 0; y < PresetRows; ++y)
         {
             for (int x = 0; x < PresetColumns; ++x)
@@ -1380,6 +1660,53 @@ void MlrVSTAudioProcessor::updateMonomeLEDs()
             }
         }
 
+        // First 4 top-row pads are bar-quantized sub-presets for the active main preset.
+        // They are independent from the normal 16x7 preset matrix and intentionally
+        // override row-0 cols 0..3 visuals in preset mode.
+        for (int subSlot = 0; subSlot < SubPresetSlots; ++subSlot)
+        {
+            const auto slotIdx = static_cast<size_t>(subSlot);
+            if (subPresetPadHeld[slotIdx] && !subPresetPadHoldSaveTriggered[slotIdx])
+            {
+                const uint32_t elapsed = nowMs - subPresetPadPressStartMs[slotIdx];
+                if (elapsed >= presetHoldSaveMs)
+                {
+                    const bool saved = saveSubPresetForMainPreset(activeMainPreset, subSlot);
+                    subPresetPadHoldSaveTriggered[slotIdx] = true;
+                    if (saved)
+                        subPresetPadSaveBurstUntilMs[slotIdx] = nowMs + presetSaveBurstDurationMs;
+                }
+            }
+
+            const int storageIndex = getSubPresetStoragePresetIndex(activeMainPreset, subSlot);
+            const bool exists = presetExists(storageIndex);
+            const bool held = subPresetPadHeld[slotIdx];
+            const bool active = (subSlot == activeSubPresetSlot);
+            const bool inSequence = subPresetSequenceActive
+                && std::find(subPresetSequenceSlots.begin(), subPresetSequenceSlots.end(), subSlot)
+                    != subPresetSequenceSlots.end();
+            const bool queued = pendingSubPresetRecall.active
+                && pendingSubPresetRecall.subPresetSlot == subSlot;
+            const bool burstActive = nowMs < subPresetPadSaveBurstUntilMs[slotIdx];
+
+            int level = exists ? 8 : 2;
+            if (active)
+                level = 11;
+            if (inSequence)
+                level = fastBlinkOn ? 15 : 6;
+            if (queued)
+                level = slowBlinkOn ? 15 : 7;
+            if (held)
+                level = 15;
+            if (burstActive)
+            {
+                const bool burstOn = ((nowMs / presetSaveBurstIntervalMs) & 1u) == 0u;
+                level = burstOn ? 15 : 0;
+            }
+
+            newLedState[subSlot][GROUP_ROW] = level;
+        }
+
         // Keep control row visible while preset grid is active.
         for (int x = 0; x < NumControlRowPages && x < gridWidth; ++x)
             newLedState[x][CONTROL_ROW] = 5;
@@ -1408,8 +1735,9 @@ void MlrVSTAudioProcessor::updateMonomeLEDs()
         return;
     }
 
-    // ROW 0: Group status (0-3) + Pattern recorders (4-7)
-    // BUT in Filter mode: Buttons 0,1,3 = sub-page selectors
+    // ROW 0 handling by mode:
+    // - Normal: sub-presets in cols 0-3, cols 4-7 unused.
+    // - Filter: buttons 0,1,3 = sub-page selectors.
     if (controlModeActive && currentControlMode == ControlMode::StepEdit)
     {
         for (int i = 0; i < 16; ++i)
@@ -1464,10 +1792,43 @@ void MlrVSTAudioProcessor::updateMonomeLEDs()
         newLedState[14][GROUP_ROW] = bankDownAvailable ? 9 : 2;
         newLedState[15][GROUP_ROW] = bankUpAvailable ? 9 : 2;
     }
+    else if (currentControlMode == ControlMode::BeatSpace && controlModeActive)
+    {
+        const auto beatState = getBeatSpaceVisualState();
+        for (int i = 0; i < 16; ++i)
+            newLedState[i][GROUP_ROW] = 1;
+
+        for (int c = 0; c < BeatSpaceChannels && c < 8; ++c)
+        {
+            const bool mapped = beatState.channelMapped[static_cast<size_t>(c)];
+            int level = mapped ? 5 : 1;
+            if (mapped && c == beatState.selectedChannel)
+                level = 15;
+            newLedState[c][GROUP_ROW] = level;
+        }
+
+        newLedState[8][GROUP_ROW] = beatState.linkAllChannels ? 15 : 5;
+        newLedState[9][GROUP_ROW] = 10;  // random
+
+        const bool canZoomOut = beatState.zoomLevel > 0;
+        const bool canZoomIn = beatState.zoomLevel < BeatSpaceMaxZoom;
+        newLedState[10][GROUP_ROW] = canZoomOut ? 9 : 2;
+        newLedState[11][GROUP_ROW] = canZoomIn ? 9 : 2;
+
+        const bool canPanLeft = beatState.viewX > 0;
+        const bool canPanRight = (beatState.viewX + beatState.viewWidth) < beatState.tableSize;
+        const bool canPanUp = beatState.viewY > 0;
+        const bool canPanDown = (beatState.viewY + beatState.viewHeight) < beatState.tableSize;
+        newLedState[12][GROUP_ROW] = canPanLeft ? 8 : 2;
+        newLedState[13][GROUP_ROW] = canPanRight ? 8 : 2;
+        newLedState[14][GROUP_ROW] = canPanUp ? 8 : 2;
+        newLedState[15][GROUP_ROW] = canPanDown ? 8 : 2;
+    }
     else if (controlModeActive
         && currentControlMode != ControlMode::Normal
         && currentControlMode != ControlMode::Modulation
         && currentControlMode != ControlMode::Filter
+        && currentControlMode != ControlMode::BeatSpace
         && currentControlMode != ControlMode::Preset)
     {
         // In non-modulation control pages, top row is intentionally disabled.
@@ -1586,73 +1947,50 @@ void MlrVSTAudioProcessor::updateMonomeLEDs()
     }
     else
     {
-        // Normal mode: Groups 0-3 + Patterns 4-7
-        for (int groupId = 0; groupId < 4; ++groupId)
-    {
-        auto* group = audioEngine->getGroup(groupId);
-        if (group)
+        // Normal mode: first four pads are sub-presets; cols 4-7 intentionally unused.
+        const int activeMainPreset = getActiveMainPresetIndexForSubPresets();
+        for (int subSlot = 0; subSlot < SubPresetSlots; ++subSlot)
         {
-            bool anyPlaying = false;
-            bool isMuted = group->isMuted();
-            bool hasStrips = !group->getStrips().empty();
-            
-            // Check if any strip in this group is playing
-            if (!isMuted && hasStrips)
+            const auto slotIdx = static_cast<size_t>(subSlot);
+            const int storageIndex = getSubPresetStoragePresetIndex(activeMainPreset, subSlot);
+            const bool exists = presetExists(storageIndex);
+            const bool held = subPresetPadHeld[slotIdx];
+            const bool active = (subSlot == activeSubPresetSlot);
+            const bool inSequence = subPresetSequenceActive
+                && std::find(subPresetSequenceSlots.begin(), subPresetSequenceSlots.end(), subSlot)
+                    != subPresetSequenceSlots.end();
+            const bool queued = pendingSubPresetRecall.active
+                && pendingSubPresetRecall.subPresetSlot == subSlot;
+            const bool burstActive = nowMs < subPresetPadSaveBurstUntilMs[slotIdx];
+
+            int level = exists ? 8 : 2;
+            if (active)
+                level = 11;
+            if (inSequence)
+                level = fastBlinkOn ? 15 : 6;
+            if (queued)
+                level = slowBlinkOn ? 15 : 7;
+            if (held)
+                level = 15;
+            if (burstActive)
             {
-                auto strips = group->getStrips();
-                for (int stripIdx : strips)
-                {
-                    if (auto* strip = audioEngine->getStrip(stripIdx))
-                    {
-                        if (strip->isPlaying())
-                        {
-                            anyPlaying = true;
-                            break;
-                        }
-                    }
-                }
+                const bool burstOn = ((nowMs / presetSaveBurstIntervalMs) & 1u) == 0u;
+                level = burstOn ? 15 : 0;
             }
-            
-            // LED brightness based on state:
-            // - BRIGHT (15): Group has strips playing
-            // - MEDIUM (8): Group has strips assigned but not playing
-            // - DIM (3): Group is muted
-            // - OFF (0): Group is empty
-            if (anyPlaying)
-                newLedState[groupId][GROUP_ROW] = 15;  // Playing
-            else if (isMuted)
-                newLedState[groupId][GROUP_ROW] = 3;   // Muted
-            else if (hasStrips)
-                newLedState[groupId][GROUP_ROW] = 8;   // Has strips but not playing
-            else
-                newLedState[groupId][GROUP_ROW] = 0;   // Empty group
+
+            newLedState[subSlot][GROUP_ROW] = level;
         }
-    }
-    
-        // Row 0, columns 4-7: Pattern recorder status (normal mode only)
-        for (int i = 0; i < 4; ++i)
-        {
-            int col = i + 4;  // Columns 4-7
-            auto* pattern = audioEngine->getPattern(i);
-            if (pattern)
-            {
-                if (pattern->isRecording())
-                    newLedState[col][GROUP_ROW] = fastBlinkOn ? 15 : 0;  // Recording: Fast blink
-                else if (pattern->isPlaying())
-                    newLedState[col][GROUP_ROW] = slowBlinkOn ? 12 : 0;  // Playing: Slow blink
-                else
-                    newLedState[col][GROUP_ROW] = 3;   // Stopped/idle: Dim
-            }
-        }
+
+        for (int col = 4; col < 8; ++col)
+            newLedState[col][GROUP_ROW] = 0;
     }  // End else (normal mode)
 
-    // Row 0 col 8: momentary scratch indicator in normal mode.
-    if (!controlModeActive || currentControlMode == ControlMode::Normal)
+    // Row 0 col 8: momentary scratch indicator.
+    if (topRowStutterVisible)
         newLedState[8][GROUP_ROW] = momentaryScratchHoldActive ? 15 : 4;
 
     // Row 0, cols 9-15: momentary stutter division selectors.
-    // Visible on normal page only.
-    if (!controlModeActive || currentControlMode == ControlMode::Normal)
+    if (topRowStutterVisible)
     {
         const uint8_t heldMask = momentaryStutterButtonMask.load(std::memory_order_acquire);
         for (int x = 9; x <= 15; ++x)
@@ -1799,8 +2137,8 @@ void MlrVSTAudioProcessor::updateMonomeLEDs()
         bool hasContent = strip->hasAudio();
         if (strip->playMode == EnhancedAudioStrip::PlayMode::Step)
         {
-            // In step mode, check if stepSampler has audio
-            hasContent = strip->stepSampler.getHasAudio();
+            // Step lanes should remain visible even without loaded sample buffers.
+            hasContent = true;
         }
         
         // Only skip empty strips when in Normal mode or FileBrowser mode
@@ -1818,35 +2156,97 @@ void MlrVSTAudioProcessor::updateMonomeLEDs()
         }
         
         // Different displays per mode - ONLY when control button is HELD
-        if (controlModeActive && currentControlMode == ControlMode::Speed)
+        if (controlModeActive && currentControlMode == ControlMode::BeatSpace)
         {
-            MonomeMixActions::renderRow(*strip, *this, y, newLedState, static_cast<int>(currentControlMode));
+            const auto beatState = getBeatSpaceVisualState();
+            const int activeGridWidth = juce::jlimit(1, MaxColumns, getMonomeGridWidth());
+            const int gridRows = juce::jmax(1, CONTROL_ROW - FIRST_STRIP_ROW);
+            const int localY = juce::jlimit(0, gridRows - 1, y - FIRST_STRIP_ROW);
+
+            for (int x = 0; x < MaxColumns; ++x)
+                newLedState[x][y] = (x < activeGridWidth && beatState.decoderReady) ? 1 : 0;
+
+            for (int c = 0; c < BeatSpaceChannels; ++c)
+            {
+                if (!beatState.channelMapped[static_cast<size_t>(c)])
+                    continue;
+                const auto idx = static_cast<size_t>(c);
+                const bool morphActive = beatState.channelMorphActive[idx];
+                const auto targetCell = beatSpacePointToGridCell(
+                    beatState.channelPoints[idx],
+                    activeGridWidth,
+                    gridRows);
+
+                if (morphActive)
+                {
+                    const auto fromCell = beatSpacePointToGridCell(
+                        beatState.channelMorphFrom[idx],
+                        activeGridWidth,
+                        gridRows);
+                    const int dx = targetCell.x - fromCell.x;
+                    const int dy = targetCell.y - fromCell.y;
+                    const int steps = juce::jmax(1, juce::jmax(std::abs(dx), std::abs(dy)));
+                    for (int s = 0; s <= steps; ++s)
+                    {
+                        const float t = static_cast<float>(s) / static_cast<float>(steps);
+                        const int px = juce::jlimit(
+                            0, activeGridWidth - 1,
+                            static_cast<int>(std::lround(
+                                juce::jmap(t, static_cast<float>(fromCell.x), static_cast<float>(targetCell.x)))));
+                        const int py = juce::jlimit(
+                            0, gridRows - 1,
+                            static_cast<int>(std::lround(
+                                juce::jmap(t, static_cast<float>(fromCell.y), static_cast<float>(targetCell.y)))));
+                        if (py == localY)
+                            newLedState[px][y] = juce::jmax(newLedState[px][y], (c == beatState.selectedChannel) ? 4 : 2);
+                    }
+                }
+
+                if (morphActive && targetCell.y == localY)
+                    newLedState[targetCell.x][y] = juce::jmax(newLedState[targetCell.x][y], (c == beatState.selectedChannel) ? 8 : 4);
+
+                const auto displayPoint = morphActive
+                    ? beatState.channelMorphCurrent[idx]
+                    : beatState.channelPoints[idx];
+                const auto displayCell = beatSpacePointToGridCell(
+                    displayPoint,
+                    activeGridWidth,
+                    gridRows);
+                if (displayCell.y != localY)
+                    continue;
+                int level = (c == beatState.selectedChannel) ? 15 : 7;
+                if (morphActive)
+                    level = (c == beatState.selectedChannel) ? (fastBlinkOn ? 15 : 11) : 9;
+                newLedState[displayCell.x][y] = juce::jmax(newLedState[displayCell.x][y], level);
+            }
+        }
+        else if (controlModeActive && currentControlMode == ControlMode::Speed)
+        {
+            MonomeMixActions::renderRow(*strip, *this, stripIndex, y, newLedState, static_cast<int>(currentControlMode));
         }
         else if (controlModeActive && currentControlMode == ControlMode::Pitch)
         {
-            MonomeMixActions::renderRow(*strip, *this, y, newLedState, static_cast<int>(currentControlMode));
+            MonomeMixActions::renderRow(*strip, *this, stripIndex, y, newLedState, static_cast<int>(currentControlMode));
         }
         else if (controlModeActive && currentControlMode == ControlMode::Pan)
         {
-            MonomeMixActions::renderRow(*strip, *this, y, newLedState, static_cast<int>(currentControlMode));
+            MonomeMixActions::renderRow(*strip, *this, stripIndex, y, newLedState, static_cast<int>(currentControlMode));
         }
         else if (controlModeActive && currentControlMode == ControlMode::Volume)
         {
-            MonomeMixActions::renderRow(*strip, *this, y, newLedState, static_cast<int>(currentControlMode));
+            MonomeMixActions::renderRow(*strip, *this, stripIndex, y, newLedState, static_cast<int>(currentControlMode));
+        }
+        else if (controlModeActive && currentControlMode == ControlMode::Length)
+        {
+            MonomeMixActions::renderRow(*strip, *this, stripIndex, y, newLedState, static_cast<int>(currentControlMode));
         }
         else if (controlModeActive && currentControlMode == ControlMode::Swing)
         {
-            MonomeMixActions::renderRow(*strip, *this, y, newLedState, static_cast<int>(currentControlMode));
+            MonomeMixActions::renderRow(*strip, *this, stripIndex, y, newLedState, static_cast<int>(currentControlMode));
         }
         else if (controlModeActive && currentControlMode == ControlMode::Gate)
         {
-            MonomeMixActions::renderRow(*strip, *this, y, newLedState, static_cast<int>(currentControlMode));
-        }
-        else if (controlModeActive && currentControlMode == ControlMode::GrainSize)
-        {
-            const int targetStripIndex = clampVisibleStrip(getLastMonomePressedStripRow());
-            if (auto* targetStrip = audioEngine->getStrip(targetStripIndex))
-                MonomeMixActions::renderGrainPageRow(*targetStrip, stripIndex, y, newLedState);
+            MonomeMixActions::renderRow(*strip, *this, stripIndex, y, newLedState, static_cast<int>(currentControlMode));
         }
         else if (controlModeActive && currentControlMode == ControlMode::Filter)
         {

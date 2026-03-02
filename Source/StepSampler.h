@@ -340,7 +340,7 @@ public:
     float getFilterResonance() const { return filterResonance; }
     FilterType getFilterType() const { return filterType; }
     
-    void process(juce::AudioBuffer<float>& output, int startSample, int numSamples)
+    void process(juce::AudioBuffer<float>& output, int startSample, int numSamples, float outputGain = 1.0f)
     {
         if (!hasAudio || numSamples <= 0)
             return;
@@ -371,6 +371,7 @@ public:
         }
         
         // Apply volume and pan, then add to output
+        const float clampedOutputGain = juce::jlimit(0.0f, 4.0f, outputGain);
         for (int channel = 0; channel < output.getNumChannels() && channel < 2; ++channel)
         {
             // Calculate pan gains
@@ -386,7 +387,7 @@ public:
                 rightGain = pan >= 0.0f ? 1.0f : (1.0f + pan);
             }
             
-            float gain = volume * (channel == 0 ? leftGain : rightGain);
+            float gain = volume * clampedOutputGain * (channel == 0 ? leftGain : rightGain);
             
             // Add to output buffer
             output.addFrom(channel, startSample, tempBuffer, channel, 0, numSamples, gain);

@@ -122,13 +122,13 @@ std::array<int, 64> makeSubdivisionRing(int subdivisions)
 }
 }
 
-bool MlrVSTAudioProcessor::isArcModulationMode() const
+bool StepVstHostAudioProcessor::isArcModulationMode() const
 {
     return (arcControlMode == ArcControlMode::Modulation)
         || (controlModeActive && currentControlMode == ControlMode::Modulation);
 }
 
-void MlrVSTAudioProcessor::setArcControlMode(ArcControlMode mode)
+void StepVstHostAudioProcessor::setArcControlMode(ArcControlMode mode)
 {
     if (arcControlMode == mode)
         return;
@@ -144,7 +144,7 @@ void MlrVSTAudioProcessor::setArcControlMode(ArcControlMode mode)
     }
 }
 
-void MlrVSTAudioProcessor::handleMonomeArcKey(int encoder, int state)
+void StepVstHostAudioProcessor::handleMonomeArcKey(int encoder, int state)
 {
     const int clampedEncoder = juce::jlimit(0, 3, encoder);
     const bool isDown = (state != 0);
@@ -162,7 +162,7 @@ void MlrVSTAudioProcessor::handleMonomeArcKey(int encoder, int state)
     }
 }
 
-void MlrVSTAudioProcessor::handleMonomeArcDelta(int encoder, int delta)
+void StepVstHostAudioProcessor::handleMonomeArcDelta(int encoder, int delta)
 {
     if (!audioEngine || !monomeConnection.isConnected() || !monomeConnection.supportsArc() || delta == 0)
         return;
@@ -356,7 +356,7 @@ void MlrVSTAudioProcessor::handleMonomeArcDelta(int encoder, int delta)
         updateMonomeLEDs();
 }
 
-void MlrVSTAudioProcessor::updateMonomeArcRings()
+void StepVstHostAudioProcessor::updateMonomeArcRings()
 {
     if (!audioEngine || !monomeConnection.isConnected() || !monomeConnection.supportsArc())
         return;

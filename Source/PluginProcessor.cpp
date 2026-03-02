@@ -661,6 +661,75 @@ float scoreBeatSpaceCategoryPoint(int category, const std::array<float, 73>& val
     }
 }
 
+juce::String describeBeatSpaceCategoryPresetPoint(
+    int category,
+    const std::array<float, 73>& values)
+{
+    constexpr int kBeatSpacePatchParamCount = 25;
+    const float oscFreq = juce::jlimit(0.0f, 1.0f, values[1]);
+    const float oscAtk = juce::jlimit(0.0f, 1.0f, values[2]);
+    const float oscDcy = juce::jlimit(0.0f, 1.0f, values[3]);
+    const float modAmt = juce::jlimit(0.0f, 1.0f, values[6]);
+    const float nFilFrq = juce::jlimit(0.0f, 1.0f, values[8]);
+    const float nFilQ = juce::jlimit(0.0f, 1.0f, values[9]);
+    const float nEnvAtk = juce::jlimit(0.0f, 1.0f, values[12]);
+    const float nEnvDcy = juce::jlimit(0.0f, 1.0f, values[13]);
+    const float mix = juce::jlimit(0.0f, 1.0f, values[14]);
+
+    float triggerDensity = 0.0f;
+    for (int step = 0; step < 16; ++step)
+    {
+        const int idx = kBeatSpacePatchParamCount + (step * 3);
+        if (values[static_cast<size_t>(idx)] >= 0.5f)
+            triggerDensity += 1.0f;
+    }
+    triggerDensity /= 16.0f;
+
+    const float lowBody = juce::jlimit(0.0f, 1.0f, ((1.0f - oscFreq) * 0.58f) + ((1.0f - nFilFrq) * 0.42f));
+    const float highBody = juce::jlimit(0.0f, 1.0f, (oscFreq * 0.52f) + (nFilFrq * 0.48f));
+    const float transient = juce::jlimit(0.0f, 1.0f, ((1.0f - oscAtk) * 0.62f) + ((1.0f - nEnvAtk) * 0.38f));
+    const float tail = juce::jlimit(0.0f, 1.0f, (oscDcy * 0.55f) + (nEnvDcy * 0.45f));
+    const float noisiness = juce::jlimit(0.0f, 1.0f, (mix * 0.62f) + (modAmt * 0.26f) + (nFilQ * 0.12f));
+    const float tonalness = juce::jlimit(0.0f, 1.0f, ((1.0f - mix) * 0.78f) + ((1.0f - modAmt) * 0.22f));
+
+    juce::String toneTag = "Mid";
+    if (lowBody > 0.66f)
+        toneTag = "Deep";
+    else if (highBody > 0.66f)
+        toneTag = "Bright";
+
+    juce::String envTag = "Punch";
+    if (tail < 0.34f && transient > 0.62f)
+        envTag = "Tight";
+    else if (tail > 0.66f)
+        envTag = "Long";
+
+    juce::String textureTag = "Hybrid";
+    if (noisiness > (tonalness + 0.12f))
+        textureTag = "Noise";
+    else if (tonalness > (noisiness + 0.12f))
+        textureTag = "Tone";
+
+    juce::String densityTag = "Steady";
+    if (triggerDensity < 0.30f)
+        densityTag = "Sparse";
+    else if (triggerDensity > 0.62f)
+        densityTag = "Dense";
+
+    juce::String categoryTag;
+    switch (juce::jlimit(0, StepVstHostAudioProcessor::BeatSpaceChannels - 1, category))
+    {
+        case 0: categoryTag = "Kick"; break;
+        case 1: categoryTag = "Snare"; break;
+        case 2: categoryTag = "CHat"; break;
+        case 3: categoryTag = "OHat"; break;
+        case 4: categoryTag = "Perc"; break;
+        default: categoryTag = "Misc"; break;
+    }
+
+    return categoryTag + " " + toneTag + " " + envTag + " " + textureTag + " " + densityTag;
+}
+
 bool isPersistentGlobalControlParameterId(const juce::String& parameterID)
 {
     for (const auto* id : kPersistentGlobalControlParameterIds)
@@ -2432,8 +2501,10 @@ void StepVstHostAudioProcessor::applyBeatSpaceDefaultChannelLayout()
         rebuildBeatSpaceCategoryAnchors();
 
     // Kick, snare, closed hat, open hat, percussion, misc.
+    // These hand-picked fallbacks bias startup toward clearly separated regions
+    // before local scoring/refinement is applied.
     static constexpr std::array<juce::Point<int>, BeatSpaceChannels> kFallbackPoints {{
-        { 20, 20 }, { 42, 20 }, { 20, 42 }, { 42, 42 }, { 31, 16 }, { 31, 48 }
+        { 12, 50 }, { 24, 34 }, { 50, 10 }, { 54, 22 }, { 39, 40 }, { 30, 28 }
     }};
 
     for (int i = 0; i < BeatSpaceChannels; ++i)
@@ -2518,9 +2589,7 @@ void StepVstHostAudioProcessor::applyBeatSpaceDefaultChannelLayout()
 
         // Keep startup defaults category-faithful by searching around the category
         // anchor/region first instead of allowing far-away outliers to win globally.
-        const auto searchCenter = beatSpaceCategoryAnchorsReady
-            ? beatSpaceCategoryAnchors[static_cast<size_t>(assignedSpace)]
-            : sourcePoint;
+        const auto searchCenter = sourcePoint;
         const int baseRx = beatSpaceCategoryAnchorsReady
             ? juce::jmax(1, beatSpaceCategoryRegionRadiusX[static_cast<size_t>(assignedSpace)])
             : 12;
@@ -3402,9 +3471,11 @@ void StepVstHostAudioProcessor::rebuildBeatSpaceCategoryPresetPoints()
     {
         juce::Point<int> point;
         float score = 0.0f;
+        bool strict = false;
     };
 
-    constexpr int kTopCandidates = 640;
+    constexpr int kTopCandidates = 2048;
+    constexpr int kMinStrictCandidates = BeatSpacePresetSlotsPerSpace / 2;
 
     for (int category = 0; category < BeatSpaceChannels; ++category)
     {
@@ -3438,18 +3509,27 @@ void StepVstHostAudioProcessor::rebuildBeatSpaceCategoryPresetPoints()
                 }
                 const float margin = ownCategoryScore - bestOtherCategoryScore;
                 const float confidence = juce::jlimit(0.0f, 1.0f, (margin + 0.22f) / 0.66f);
-                float score = ownCategoryScore + (0.32f * confidence);
+                const float categoryPurity = juce::jlimit(0.0f, 1.0f, (margin + 0.05f) / 0.35f);
+                float score = ownCategoryScore + (0.26f * confidence) + (0.38f * categoryPurity);
+                if (margin < -0.06f)
+                    score -= juce::jlimit(0.20f, 0.55f, 0.25f + (std::abs(margin) * 0.90f));
+                else if (margin > 0.08f)
+                    score += juce::jlimit(0.0f, 0.22f, margin * 0.45f);
 
                 if (tableIndex < static_cast<int>(beatSpaceHotspotWeights.size()))
-                    score += 0.18f * beatSpaceHotspotWeights[static_cast<size_t>(tableIndex)];
+                    score += 0.24f * beatSpaceHotspotWeights[static_cast<size_t>(tableIndex)];
 
+                bool clusterMatch = true;
                 if (preferredCluster >= 0
                     && tableIndex < static_cast<int>(beatSpaceColorClusters.size()))
                 {
                     if (beatSpaceColorClusters[static_cast<size_t>(tableIndex)] == preferredCluster)
-                        score += 0.12f;
+                        score += 0.16f;
                     else
-                        score -= 0.05f;
+                    {
+                        score -= 0.14f;
+                        clusterMatch = false;
+                    }
                 }
 
                 const float dxNorm = std::abs(static_cast<float>(x - anchor.x))
@@ -3457,7 +3537,7 @@ void StepVstHostAudioProcessor::rebuildBeatSpaceCategoryPresetPoints()
                 const float dyNorm = std::abs(static_cast<float>(y - anchor.y))
                     / static_cast<float>(juce::jmax(1, ry));
                 const float regionDist = std::sqrt((dxNorm * dxNorm) + (dyNorm * dyNorm));
-                score += juce::jlimit(-0.24f, 0.24f, 0.22f - (0.12f * regionDist));
+                score += juce::jlimit(-0.28f, 0.26f, 0.24f - (0.14f * regionDist));
 
                 for (int manualCategory = 0; manualCategory < BeatSpaceChannels; ++manualCategory)
                 {
@@ -3492,9 +3572,14 @@ void StepVstHostAudioProcessor::rebuildBeatSpaceCategoryPresetPoints()
                     && (y >= (anchor.y - ry))
                     && (y <= (anchor.y + ry));
                 if (!insideRegion)
-                    score -= 0.08f;
+                    score -= 0.14f;
 
-                candidates.push_back({ { x, y }, score });
+                const bool strictCandidate = (margin >= 0.04f)
+                    && (confidence >= 0.42f)
+                    && insideRegion
+                    && clusterMatch;
+
+                candidates.push_back({ { x, y }, score, strictCandidate });
             }
         }
 
@@ -3518,6 +3603,14 @@ void StepVstHostAudioProcessor::rebuildBeatSpaceCategoryPresetPoints()
 
         if (candidates.size() > static_cast<size_t>(kTopCandidates))
             candidates.resize(static_cast<size_t>(kTopCandidates));
+
+        std::vector<CandidatePoint> strictCandidates;
+        strictCandidates.reserve(candidates.size());
+        for (const auto& candidate : candidates)
+        {
+            if (candidate.strict)
+                strictCandidates.push_back(candidate);
+        }
 
         std::vector<CandidatePoint> selected;
         selected.reserve(BeatSpacePresetSlotsPerSpace);
@@ -3549,70 +3642,87 @@ void StepVstHostAudioProcessor::rebuildBeatSpaceCategoryPresetPoints()
         }
 
         if (selected.empty())
-            selected.push_back(candidates.front());
-
-        while (selected.size() < static_cast<size_t>(BeatSpacePresetSlotsPerSpace)
-               && selected.size() < candidates.size())
         {
-            float bestPickScore = -1.0e9f;
-            size_t bestIndex = 0;
-
-            for (size_t i = 0; i < candidates.size(); ++i)
-            {
-                const auto& cand = candidates[i];
-                bool alreadySelected = false;
-                for (const auto& s : selected)
-                {
-                    if (s.point == cand.point)
-                    {
-                        alreadySelected = true;
-                        break;
-                    }
-                }
-                if (alreadySelected)
-                    continue;
-
-                float minDistance = std::numeric_limits<float>::max();
-                for (const auto& s : selected)
-                {
-                    const float dx = static_cast<float>(cand.point.x - s.point.x);
-                    const float dy = static_cast<float>(cand.point.y - s.point.y);
-                    minDistance = juce::jmin(minDistance, std::sqrt((dx * dx) + (dy * dy)));
-                }
-                if (!std::isfinite(minDistance))
-                    minDistance = 0.0f;
-
-                const float diversity = juce::jlimit(0.0f, 1.0f, minDistance / 26.0f);
-                const float pickScore = cand.score + (0.24f * diversity);
-                if (pickScore > bestPickScore)
-                {
-                    bestPickScore = pickScore;
-                    bestIndex = i;
-                }
-            }
-
-            selected.push_back(candidates[bestIndex]);
+            if (strictCandidates.size() >= static_cast<size_t>(kMinStrictCandidates))
+                selected.push_back(strictCandidates.front());
+            else
+                selected.push_back(candidates.front());
         }
 
-        if (selected.empty())
-            selected.push_back({ anchor, 0.0f });
-
-        std::sort(
-            selected.begin(),
-            selected.end(),
-            [](const CandidatePoint& a, const CandidatePoint& b)
+        auto appendDiverseSelections = [&](const std::vector<CandidatePoint>& pool)
+        {
+            while (selected.size() < static_cast<size_t>(BeatSpacePresetSlotsPerSpace)
+                   && selected.size() < pool.size())
             {
-                if (a.point.y == b.point.y)
-                    return a.point.x < b.point.x;
-                return a.point.y < b.point.y;
-            });
+                float bestPickScore = -1.0e9f;
+                int bestIndex = -1;
+
+                for (size_t i = 0; i < pool.size(); ++i)
+                {
+                    const auto& cand = pool[i];
+                    bool alreadySelected = false;
+                    for (const auto& s : selected)
+                    {
+                        if (s.point == cand.point)
+                        {
+                            alreadySelected = true;
+                            break;
+                        }
+                    }
+                    if (alreadySelected)
+                        continue;
+
+                    float minDistance = std::numeric_limits<float>::max();
+                    for (const auto& s : selected)
+                    {
+                        const float dx = static_cast<float>(cand.point.x - s.point.x);
+                        const float dy = static_cast<float>(cand.point.y - s.point.y);
+                        minDistance = juce::jmin(minDistance, std::sqrt((dx * dx) + (dy * dy)));
+                    }
+                    if (!std::isfinite(minDistance))
+                        minDistance = 0.0f;
+
+                    const float diversity = juce::jlimit(0.0f, 1.0f, minDistance / 24.0f);
+                    const float pickScore = cand.score + (0.28f * diversity);
+                    if (pickScore > bestPickScore)
+                    {
+                        bestPickScore = pickScore;
+                        bestIndex = static_cast<int>(i);
+                    }
+                }
+
+                if (bestIndex < 0)
+                    break;
+                selected.push_back(pool[static_cast<size_t>(bestIndex)]);
+            }
+        };
+
+        if (strictCandidates.size() >= static_cast<size_t>(kMinStrictCandidates))
+            appendDiverseSelections(strictCandidates);
+        appendDiverseSelections(candidates);
+
+        if (selected.empty())
+            selected.push_back({ anchor, 0.0f, false });
 
         auto& presetPoints = beatSpaceCategoryPresetPoints[catIdx];
+        auto& presetLabels = beatSpaceCategoryPresetLabels[catIdx];
         for (int slot = 0; slot < BeatSpacePresetSlotsPerSpace; ++slot)
         {
             const auto sourceIndex = static_cast<size_t>(
                 juce::jlimit(0, static_cast<int>(selected.size()) - 1, slot));
-            presetPoints[static_cast<size_t>(slot)] = clampPoint(selected[sourceIndex].point);
+            const auto clampedPoint = clampPoint(selected[sourceIndex].point);
+            presetPoints[static_cast<size_t>(slot)] = clampedPoint;
+
+            if (presetLabels[static_cast<size_t>(slot)].trim().isNotEmpty())
+                continue;
+
+            const int tableIndex = (clampedPoint.y * BeatSpaceTableSize) + clampedPoint.x;
+            if (tableIndex < 0 || tableIndex >= static_cast<int>(beatSpaceTable.size()))
+                continue;
+
+            presetLabels[static_cast<size_t>(slot)] = describeBeatSpaceCategoryPresetPoint(
+                category,
+                beatSpaceTable[static_cast<size_t>(tableIndex)].values);
         }
         beatSpaceCategoryPresetPointsReady[catIdx] = true;
     }
@@ -3703,9 +3813,10 @@ bool StepVstHostAudioProcessor::initializeBeatSpaceTable()
     rebuildBeatSpaceCategoryAnchors();
     rebuildBeatSpaceTablePreviewImage();
     beatSpaceDecoderReady = true;
+    const int totalCells = BeatSpaceTableSize * BeatSpaceTableSize;
     beatSpaceStatusMessage = beatSpaceColorClustersReady
-        ? "BeatSpace table loaded (4096 x 73, color clusters + hotspots)"
-        : "BeatSpace table loaded (4096 x 73)";
+        ? "BeatSpace table loaded (" + juce::String(totalCells) + " x 73, color clusters + hotspots)"
+        : "BeatSpace table loaded (" + juce::String(totalCells) + " x 73)";
     return true;
 }
 
@@ -5051,7 +5162,63 @@ bool StepVstHostAudioProcessor::loadBeatSpacePresetFromAssignedSpaceDisplayIndex
         return false;
 
     const int clampedDisplay = juce::jlimit(0, static_cast<int>(visible.size()) - 1, displayIndex);
-    return loadBeatSpacePresetFromAssignedSpace(clampedChannel, visible[static_cast<size_t>(clampedDisplay)]);
+    const bool loaded = loadBeatSpacePresetFromAssignedSpace(
+        clampedChannel,
+        visible[static_cast<size_t>(clampedDisplay)]);
+    if (loaded)
+        beatSpaceLastLoadedDisplayPresetIndex[static_cast<size_t>(clampedChannel)] = clampedDisplay;
+    return loaded;
+}
+
+bool StepVstHostAudioProcessor::loadAdjacentBeatSpacePresetForAssignedSpace(int channel, int direction)
+{
+    if (channel < 0 || channel >= BeatSpaceChannels)
+        return false;
+
+    const int clampedChannel = channel;
+    const auto displaySlots = getBeatSpacePresetDisplaySlotsForAssignedSpace(clampedChannel);
+    if (displaySlots.empty())
+        return false;
+
+    const int count = static_cast<int>(displaySlots.size());
+    const auto idx = static_cast<size_t>(clampedChannel);
+    int currentDisplay = beatSpaceLastLoadedDisplayPresetIndex[idx];
+
+    if (currentDisplay < 0 || currentDisplay >= count)
+    {
+        const int assignedSpace = getBeatSpaceChannelSpaceAssignment(clampedChannel);
+        if (!beatSpaceCategoryPresetPointsReady[static_cast<size_t>(assignedSpace)])
+            rebuildBeatSpaceCategoryPresetPoints();
+
+        const auto currentPoint =
+            constrainBeatSpacePointForChannel(clampedChannel, beatSpaceChannelPoints[idx]);
+        float bestDistance = std::numeric_limits<float>::max();
+        int bestDisplay = 0;
+        for (int displayIndex = 0; displayIndex < count; ++displayIndex)
+        {
+            const int slot = displaySlots[static_cast<size_t>(displayIndex)];
+            const auto point = beatSpaceCategoryPresetPoints[static_cast<size_t>(assignedSpace)]
+                [static_cast<size_t>(juce::jlimit(0, BeatSpacePresetSlotsPerSpace - 1, slot))];
+            const float dx = static_cast<float>(point.x - currentPoint.x);
+            const float dy = static_cast<float>(point.y - currentPoint.y);
+            const float distance = (dx * dx) + (dy * dy);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                bestDisplay = displayIndex;
+            }
+        }
+        currentDisplay = bestDisplay;
+    }
+
+    const int step = (direction >= 0) ? 1 : -1;
+    int targetDisplay = currentDisplay + step;
+    while (targetDisplay < 0)
+        targetDisplay += count;
+    while (targetDisplay >= count)
+        targetDisplay -= count;
+
+    return loadBeatSpacePresetFromAssignedSpaceDisplayIndex(clampedChannel, targetDisplay);
 }
 
 juce::String StepVstHostAudioProcessor::getBeatSpaceSpaceName(int space)
@@ -5078,6 +5245,7 @@ void StepVstHostAudioProcessor::setBeatSpaceChannelSpaceAssignment(int channel, 
         return;
 
     assignment = clampedSpace;
+    beatSpaceLastLoadedDisplayPresetIndex[static_cast<size_t>(clampedChannel)] = -1;
 
     if (beatSpaceLinkAllChannels)
     {
@@ -5132,6 +5300,16 @@ juce::String StepVstHostAudioProcessor::getBeatSpacePresetLabelForSpaceSlot(int 
     const auto custom = beatSpaceCategoryPresetLabels[idx][slotIdx].trim();
     if (custom.isNotEmpty())
         return custom;
+
+    if (beatSpaceCategoryPresetPointsReady[idx])
+    {
+        const auto point = beatSpaceCategoryPresetPoints[idx][slotIdx];
+        const int tableIndex = (point.y * BeatSpaceTableSize) + point.x;
+        if (tableIndex >= 0 && tableIndex < static_cast<int>(beatSpaceTable.size()))
+            return describeBeatSpaceCategoryPresetPoint(
+                clampedSpace,
+                beatSpaceTable[static_cast<size_t>(tableIndex)].values);
+    }
 
     return getBeatSpaceSpaceName(clampedSpace) + " "
         + juce::String(clampedSlot + 1).paddedLeft('0', 2);
@@ -5246,6 +5424,215 @@ void StepVstHostAudioProcessor::resetBeatSpacePresetLayoutForAssignedSpace(int c
     }
     normalizeBeatSpacePresetLayoutForSpace(assignedSpace);
     savePersistentControlPages();
+}
+
+bool StepVstHostAudioProcessor::captureCurrentMicrotonicPatchValues(
+    int channel,
+    std::array<float, BeatSpacePatchParamCount>& outValues,
+    juce::String* errorOut)
+{
+    auto setError = [errorOut](const juce::String& message)
+    {
+        if (errorOut != nullptr)
+            *errorOut = message;
+    };
+
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    auto* instance = hostRack.getInstance();
+    if (instance == nullptr)
+    {
+        setError("No hosted plugin loaded");
+        return false;
+    }
+
+    if (!refreshBeatSpaceParameterMap())
+    {
+        setError("Microtonic parameter mapping unavailable");
+        return false;
+    }
+
+    const auto idx = static_cast<size_t>(clampedChannel);
+    if (!beatSpaceChannelMappingReady[idx])
+    {
+        setError("Lane " + juce::String(clampedChannel + 1) + " is not mapped");
+        return false;
+    }
+
+    const auto& params = instance->getParameters();
+    for (int patch = 0; patch < BeatSpacePatchParamCount; ++patch)
+    {
+        const int paramIndex = beatSpaceParamMap[idx][static_cast<size_t>(patch)];
+        if (paramIndex < 0 || paramIndex >= static_cast<int>(params.size()))
+        {
+            setError("Patch parameter mapping incomplete");
+            return false;
+        }
+        outValues[static_cast<size_t>(patch)] = juce::jlimit(0.0f, 1.0f, params[paramIndex]->getValue());
+    }
+
+    return true;
+}
+
+bool StepVstHostAudioProcessor::applyMicrotonicPatchValues(
+    int channel,
+    const std::array<float, BeatSpacePatchParamCount>& values,
+    juce::String* errorOut)
+{
+    auto setError = [errorOut](const juce::String& message)
+    {
+        if (errorOut != nullptr)
+            *errorOut = message;
+    };
+
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    auto* instance = hostRack.getInstance();
+    if (instance == nullptr)
+    {
+        setError("No hosted plugin loaded");
+        return false;
+    }
+
+    if (!refreshBeatSpaceParameterMap())
+    {
+        setError("Microtonic parameter mapping unavailable");
+        return false;
+    }
+
+    const auto idx = static_cast<size_t>(clampedChannel);
+    if (!beatSpaceChannelMappingReady[idx])
+    {
+        setError("Lane " + juce::String(clampedChannel + 1) + " is not mapped");
+        return false;
+    }
+
+    const auto& params = instance->getParameters();
+    float maxError = 0.0f;
+    for (int patch = 0; patch < BeatSpacePatchParamCount; ++patch)
+    {
+        const int paramIndex = beatSpaceParamMap[idx][static_cast<size_t>(patch)];
+        if (paramIndex < 0 || paramIndex >= static_cast<int>(params.size()))
+        {
+            setError("Patch parameter mapping incomplete");
+            return false;
+        }
+
+        const float normalized = juce::jlimit(0.0f, 1.0f, values[static_cast<size_t>(patch)]);
+        params[paramIndex]->setValueNotifyingHost(normalized);
+        const float readBack = params[paramIndex]->getValue();
+        maxError = juce::jmax(maxError, std::abs(readBack - normalized));
+        beatSpaceCurrentVectors[idx][static_cast<size_t>(patch)] = normalized;
+    }
+
+    beatSpaceLastRecallMaxError[idx] = maxError;
+    return true;
+}
+
+std::vector<int> StepVstHostAudioProcessor::getMicrotonicStripPresetSlots(int channel) const
+{
+    std::vector<int> slots;
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const auto& presets = microtonicStripPresets[static_cast<size_t>(clampedChannel)];
+    for (int slot = 0; slot < MicrotonicStripPresetSlots; ++slot)
+    {
+        if (presets[static_cast<size_t>(slot)].used)
+            slots.push_back(slot);
+    }
+    return slots;
+}
+
+juce::String StepVstHostAudioProcessor::getMicrotonicStripPresetName(int channel, int slot) const
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const int clampedSlot = juce::jlimit(0, MicrotonicStripPresetSlots - 1, slot);
+    const auto& preset = microtonicStripPresets[static_cast<size_t>(clampedChannel)][static_cast<size_t>(clampedSlot)];
+    if (!preset.used)
+        return {};
+    const auto trimmed = preset.name.trim();
+    if (trimmed.isNotEmpty())
+        return trimmed;
+    return "Patch " + juce::String(clampedSlot + 1).paddedLeft('0', 2);
+}
+
+bool StepVstHostAudioProcessor::storeCurrentMicrotonicStripPreset(
+    int channel,
+    int preferredSlot,
+    const juce::String& customName,
+    int* storedSlotOut,
+    juce::String* errorOut)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const auto channelIdx = static_cast<size_t>(clampedChannel);
+
+    int targetSlot = (preferredSlot >= 0 && preferredSlot < MicrotonicStripPresetSlots)
+        ? preferredSlot
+        : -1;
+    if (targetSlot < 0)
+    {
+        for (int slot = 0; slot < MicrotonicStripPresetSlots; ++slot)
+        {
+            if (!microtonicStripPresets[channelIdx][static_cast<size_t>(slot)].used)
+            {
+                targetSlot = slot;
+                break;
+            }
+        }
+    }
+
+    if (targetSlot < 0 || targetSlot >= MicrotonicStripPresetSlots)
+    {
+        if (errorOut != nullptr)
+            *errorOut = "No free preset slots in lane " + juce::String(clampedChannel + 1);
+        return false;
+    }
+
+    std::array<float, BeatSpacePatchParamCount> values{};
+    if (!captureCurrentMicrotonicPatchValues(clampedChannel, values, errorOut))
+        return false;
+
+    auto& preset = microtonicStripPresets[channelIdx][static_cast<size_t>(targetSlot)];
+    const auto trimmedCustomName = customName.trim();
+    juce::String resolvedName = trimmedCustomName;
+    if (resolvedName.isEmpty())
+        resolvedName = preset.name.trim();
+    if (resolvedName.isEmpty())
+        resolvedName = "Lane " + juce::String(clampedChannel + 1)
+            + " Patch " + juce::String(targetSlot + 1).paddedLeft('0', 2);
+
+    preset.used = true;
+    preset.name = resolvedName;
+    preset.patchValues = values;
+    savePersistentControlPages();
+
+    if (storedSlotOut != nullptr)
+        *storedSlotOut = targetSlot;
+    return true;
+}
+
+bool StepVstHostAudioProcessor::recallMicrotonicStripPreset(int channel, int slot, juce::String* errorOut)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const int clampedSlot = juce::jlimit(0, MicrotonicStripPresetSlots - 1, slot);
+    const auto& preset = microtonicStripPresets[static_cast<size_t>(clampedChannel)][static_cast<size_t>(clampedSlot)];
+    if (!preset.used)
+    {
+        if (errorOut != nullptr)
+            *errorOut = "Preset slot is empty";
+        return false;
+    }
+
+    return applyMicrotonicPatchValues(clampedChannel, preset.patchValues, errorOut);
+}
+
+bool StepVstHostAudioProcessor::deleteMicrotonicStripPreset(int channel, int slot)
+{
+    const int clampedChannel = juce::jlimit(0, BeatSpaceChannels - 1, channel);
+    const int clampedSlot = juce::jlimit(0, MicrotonicStripPresetSlots - 1, slot);
+    auto& preset = microtonicStripPresets[static_cast<size_t>(clampedChannel)][static_cast<size_t>(clampedSlot)];
+    if (!preset.used)
+        return false;
+    preset = MicrotonicStripPreset{};
+    savePersistentControlPages();
+    return true;
 }
 
 void StepVstHostAudioProcessor::beatSpaceSelectChannel(int channel)
@@ -5623,14 +6010,39 @@ bool StepVstHostAudioProcessor::beatSpacePathStart(int channel, BeatSpacePathMod
         return false;
 
     path.mode = mode;
-    path.cycleBeats = (mode == BeatSpacePathMode::QuarterNote) ? 0.25 : 4.0;
-    path.loopBars = (mode == BeatSpacePathMode::OneBar) ? 1 : 0;
+    if (mode == BeatSpacePathMode::QuarterNote)
+    {
+        path.cycleBeats = 0.25;
+        path.loopBars = 0;
+    }
+    else
+    {
+        // Keep path loops bar-quantized in even bars so longer gestures remain intact.
+        int bars = (path.loopBars > 0) ? path.loopBars : 2;
+        bars = juce::jlimit(2, 32, bars);
+        if ((bars & 1) != 0)
+            bars = juce::jlimit(2, 32, bars + 1);
+        path.loopBars = bars;
+        path.cycleBeats = static_cast<double>(bars) * 4.0;
+    }
     path.active = true;
-    path.pendingQuantizedStart = false;
     path.recording = false;
     path.recordStartPpq = -1.0;
     path.startMs = juce::Time::getMillisecondCounterHiRes();
     path.startPpq = -1.0;
+    path.pendingQuantizedStart = false;
+    if (auto* playHead = getPlayHead())
+    {
+        if (auto position = playHead->getPosition())
+        {
+            if (position->getPpqPosition().hasValue())
+            {
+                const double hostPpq = *position->getPpqPosition();
+                path.startPpq = (std::floor(hostPpq / 4.0) + 1.0) * 4.0;
+                path.pendingQuantizedStart = true;
+            }
+        }
+    }
     savePersistentControlPages();
     return true;
 }
@@ -6022,9 +6434,34 @@ void StepVstHostAudioProcessor::beatSpaceSetChannelPoint(
 
     if (beatSpaceLinkAllChannels && moveLinkedGroup)
     {
+        const auto previousAnchorPoint =
+            clampBeatSpacePointToTable(beatSpaceChannelPoints[static_cast<size_t>(clampedChannel)]);
+        const int deltaX = clampedPoint.x - previousAnchorPoint.x;
+        const int deltaY = clampedPoint.y - previousAnchorPoint.y;
+
         if (!beatSpaceLinkedOffsetsReady)
             rebuildBeatSpaceLinkedOffsetsFromCurrent(clampedChannel);
         applyBeatSpaceLinkedChannelOffsets(clampedPoint, clampedChannel);
+
+        // Keep recorded paths attached to the linked constellation when the
+        // whole group is moved manually.
+        if (deltaX != 0 || deltaY != 0)
+        {
+            for (int c = 0; c < BeatSpaceChannels; ++c)
+            {
+                auto& path = beatSpacePaths[static_cast<size_t>(c)];
+                if (path.count <= 0)
+                    continue;
+                for (int p = 0; p < path.count && p < BeatSpacePathMaxPoints; ++p)
+                {
+                    auto pointOnPath = path.points[static_cast<size_t>(p)];
+                    pointOnPath.x += deltaX;
+                    pointOnPath.y += deltaY;
+                    path.points[static_cast<size_t>(p)] = clampBeatSpacePointToTable(pointOnPath);
+                }
+            }
+        }
+
         applyBeatSpacePointToChannels(true, morph);
         return;
     }
@@ -6987,7 +7424,7 @@ void StepVstHostAudioProcessor::applyPendingStutterStart(const juce::AudioPlayHe
         const bool stepMode = (strip && strip->getPlayMode() == EnhancedAudioStrip::PlayMode::Step);
         const auto* stepSampler = stepMode && strip ? strip->getStepSampler() : nullptr;
         const bool hasPlayableContent = strip
-            && (strip->hasAudio() || (stepSampler && stepSampler->getHasAudio()));
+            && (stepMode || strip->hasAudio() || (stepSampler && stepSampler->getHasAudio()));
         if (!strip || !hasPlayableContent || !strip->isPlaying())
             continue;
         hasAnyPlayingStrip = true;
@@ -7082,7 +7519,7 @@ void StepVstHostAudioProcessor::captureMomentaryStutterMacroBaseline()
         const bool stepMode = (strip && strip->getPlayMode() == EnhancedAudioStrip::PlayMode::Step);
         const auto* stepSampler = stepMode && strip ? strip->getStepSampler() : nullptr;
         const bool hasPlayableContent = strip
-            && (strip->hasAudio() || (stepSampler && stepSampler->getHasAudio()));
+            && (stepMode || strip->hasAudio() || (stepSampler && stepSampler->getHasAudio()));
         if (!strip || !momentaryStutterStripArmed[idx] || !hasPlayableContent || !strip->isPlaying())
             continue;
 
@@ -7200,7 +7637,7 @@ void StepVstHostAudioProcessor::applyMomentaryStutterMacro(const juce::AudioPlay
             const bool stepMode = (strip && strip->getPlayMode() == EnhancedAudioStrip::PlayMode::Step);
             const auto* stepSampler = stepMode && strip ? strip->getStepSampler() : nullptr;
             const bool hasPlayableContent = strip
-                && (strip->hasAudio() || (stepSampler && stepSampler->getHasAudio()));
+                && (stepMode || strip->hasAudio() || (stepSampler && stepSampler->getHasAudio()));
             if (!strip || !hasPlayableContent || !strip->isPlaying())
                 continue;
 
@@ -7924,7 +8361,7 @@ void StepVstHostAudioProcessor::applyMomentaryStutterMacro(const juce::AudioPlay
         const bool stepMode = (strip && strip->getPlayMode() == EnhancedAudioStrip::PlayMode::Step);
         auto* stepSampler = (stepMode && strip) ? strip->getStepSampler() : nullptr;
         const bool hasPlayableContent = strip
-            && (strip->hasAudio() || (stepSampler && stepSampler->getHasAudio()));
+            && (stepMode || strip->hasAudio() || (stepSampler && stepSampler->getHasAudio()));
         if (!strip || !hasPlayableContent || !strip->isPlaying())
             continue;
 
@@ -8484,6 +8921,29 @@ void StepVstHostAudioProcessor::appendControlPagesToState(juce::ValueTree& state
                 bookmark.tag,
                 nullptr);
         }
+
+        const auto& stripPresets = microtonicStripPresets[idx];
+        for (int slot = 0; slot < MicrotonicStripPresetSlots; ++slot)
+        {
+            const auto slotIdx = static_cast<size_t>(slot);
+            const auto& preset = stripPresets[slotIdx];
+            controlPages.setProperty(
+                "microtonicPresetUsed_" + juce::String(i) + "_" + juce::String(slot),
+                preset.used,
+                nullptr);
+            controlPages.setProperty(
+                "microtonicPresetName_" + juce::String(i) + "_" + juce::String(slot),
+                preset.name,
+                nullptr);
+            for (int patch = 0; patch < BeatSpacePatchParamCount; ++patch)
+            {
+                controlPages.setProperty(
+                    "microtonicPresetVal_" + juce::String(i) + "_" + juce::String(slot) + "_"
+                        + juce::String(patch),
+                    preset.patchValues[static_cast<size_t>(patch)],
+                    nullptr);
+            }
+        }
     }
 }
 
@@ -8791,6 +9251,31 @@ void StepVstHostAudioProcessor::loadControlPagesFromState(const juce::ValueTree&
             if (bookmark.used && bookmark.tag.trim().isEmpty())
                 bookmark.tag = "P " + juce::String(bookmark.point.x) + "," + juce::String(bookmark.point.y);
         }
+
+        auto& stripPresets = microtonicStripPresets[idx];
+        for (int slot = 0; slot < MicrotonicStripPresetSlots; ++slot)
+        {
+            const auto slotIdx = static_cast<size_t>(slot);
+            auto& preset = stripPresets[slotIdx];
+            preset.used = static_cast<bool>(controlPages.getProperty(
+                "microtonicPresetUsed_" + juce::String(i) + "_" + juce::String(slot),
+                false));
+            preset.name = controlPages.getProperty(
+                "microtonicPresetName_" + juce::String(i) + "_" + juce::String(slot),
+                "").toString();
+            for (int patch = 0; patch < BeatSpacePatchParamCount; ++patch)
+            {
+                preset.patchValues[static_cast<size_t>(patch)] = juce::jlimit(
+                    0.0f,
+                    1.0f,
+                    static_cast<float>(controlPages.getProperty(
+                        "microtonicPresetVal_" + juce::String(i) + "_" + juce::String(slot) + "_"
+                            + juce::String(patch),
+                        0.0f)));
+            }
+            if (!preset.used)
+                preset = MicrotonicStripPreset{};
+        }
     }
     rebuildBeatSpaceCategoryAnchors();
     for (int i = 0; i < BeatSpaceChannels; ++i)
@@ -9046,6 +9531,33 @@ void StepVstHostAudioProcessor::loadPersistentControlPages()
                 xml->getStringAttribute("beatSpaceBookmarkTag_" + juce::String(i) + "_" + juce::String(b), {}),
                 nullptr);
         }
+
+        for (int slot = 0; slot < MicrotonicStripPresetSlots; ++slot)
+        {
+            controlPages.setProperty(
+                "microtonicPresetUsed_" + juce::String(i) + "_" + juce::String(slot),
+                xml->getBoolAttribute(
+                    "microtonicPresetUsed_" + juce::String(i) + "_" + juce::String(slot),
+                    false),
+                nullptr);
+            controlPages.setProperty(
+                "microtonicPresetName_" + juce::String(i) + "_" + juce::String(slot),
+                xml->getStringAttribute(
+                    "microtonicPresetName_" + juce::String(i) + "_" + juce::String(slot),
+                    {}),
+                nullptr);
+            for (int patch = 0; patch < BeatSpacePatchParamCount; ++patch)
+            {
+                controlPages.setProperty(
+                    "microtonicPresetVal_" + juce::String(i) + "_" + juce::String(slot) + "_"
+                        + juce::String(patch),
+                    xml->getDoubleAttribute(
+                        "microtonicPresetVal_" + juce::String(i) + "_" + juce::String(slot) + "_"
+                            + juce::String(patch),
+                        0.0),
+                    nullptr);
+            }
+        }
     }
     state.addChild(controlPages, -1, nullptr);
 
@@ -9224,6 +9736,26 @@ void StepVstHostAudioProcessor::savePersistentControlPages() const
             xml.setAttribute(
                 "beatSpaceBookmarkTag_" + juce::String(i) + "_" + juce::String(b),
                 bookmark.tag);
+        }
+
+        const auto& stripPresets = microtonicStripPresets[idx];
+        for (int slot = 0; slot < MicrotonicStripPresetSlots; ++slot)
+        {
+            const auto slotIdx = static_cast<size_t>(slot);
+            const auto& preset = stripPresets[slotIdx];
+            xml.setAttribute(
+                "microtonicPresetUsed_" + juce::String(i) + "_" + juce::String(slot),
+                preset.used);
+            xml.setAttribute(
+                "microtonicPresetName_" + juce::String(i) + "_" + juce::String(slot),
+                preset.name);
+            for (int patch = 0; patch < BeatSpacePatchParamCount; ++patch)
+            {
+                xml.setAttribute(
+                    "microtonicPresetVal_" + juce::String(i) + "_" + juce::String(slot) + "_"
+                        + juce::String(patch),
+                    static_cast<double>(preset.patchValues[static_cast<size_t>(patch)]));
+            }
         }
     }
     if (masterVolumeParam)
@@ -10099,8 +10631,8 @@ void StepVstHostAudioProcessor::processPendingSubPresetApply()
     const int clampedSlot = juce::jlimit(0, SubPresetSlots - 1, queuedSlot);
     const int storageIndex = getSubPresetStoragePresetIndex(clampedMain, clampedSlot);
 
-    double hostPpqSnapshot = std::numeric_limits<double>::quiet_NaN();
-    double hostTempoSnapshot = std::numeric_limits<double>::quiet_NaN();
+    double hostPpqSnapshot = audioEngine ? audioEngine->getTimelineBeat() : 0.0;
+    double hostTempoSnapshot = audioEngine ? juce::jmax(1.0, audioEngine->getCurrentTempo()) : 120.0;
     (void)getHostSyncSnapshot(hostPpqSnapshot, hostTempoSnapshot);
     performPresetLoad(storageIndex, hostPpqSnapshot, hostTempoSnapshot);
 

@@ -5,10 +5,10 @@ usage() {
     cat <<'EOF'
 Usage: ./scripts/sign_and_notarize_macos.sh [options]
 
-Signs and notarizes mlrVST plugin bundles (VST3/AU) for macOS distribution.
+Signs and notarizes step-vsthost plugin bundles (VST3/AU) for macOS distribution.
 
 Options:
-  --build-dir DIR         Build directory containing mlrVST_artefacts (default: auto-detect)
+  --build-dir DIR         Build directory containing step_vsthost_artefacts (default: auto-detect)
   --config CONFIG         Build config folder (default: Release)
   --identity ID           Developer ID Application identity
   --notary-profile NAME   notarytool keychain profile name
@@ -30,7 +30,7 @@ Examples:
       --build-dir cmake-build-release \
       --config Release \
       --identity "Developer ID Application: Your Name (TEAMID)" \
-      --notary-profile "mlrvst-notary"
+      --notary-profile "step-vsthost-notary"
 
   APPLE_ID="name@example.com" APPLE_APP_PASSWORD="xxxx-xxxx-xxxx-xxxx" TEAM_ID="ABCDE12345" \
   ./scripts/sign_and_notarize_macos.sh --identity "Developer ID Application: Your Name (ABCDE12345)"
@@ -149,9 +149,9 @@ if [[ "${SKIP_NOTARIZE}" -eq 0 ]]; then
 fi
 
 if [[ -z "${BUILD_DIR}" ]]; then
-    if [[ -d "${REPO_ROOT}/cmake-build-release/mlrVST_artefacts/${CONFIG}" ]]; then
+    if [[ -d "${REPO_ROOT}/cmake-build-release/step_vsthost_artefacts/${CONFIG}" ]]; then
         BUILD_DIR="cmake-build-release"
-    elif [[ -d "${REPO_ROOT}/Build/mlrVST_artefacts/${CONFIG}" ]]; then
+    elif [[ -d "${REPO_ROOT}/Build/step_vsthost_artefacts/${CONFIG}" ]]; then
         BUILD_DIR="Build"
     else
         echo "Could not auto-detect build dir. Pass --build-dir explicitly." >&2
@@ -159,9 +159,9 @@ if [[ -z "${BUILD_DIR}" ]]; then
     fi
 fi
 
-ARTEFACTS_DIR="${REPO_ROOT}/${BUILD_DIR}/mlrVST_artefacts/${CONFIG}"
-VST3_BUNDLE="${ARTEFACTS_DIR}/VST3/mlrVST.vst3"
-AU_BUNDLE="${ARTEFACTS_DIR}/AU/mlrVST.component"
+ARTEFACTS_DIR="${REPO_ROOT}/${BUILD_DIR}/step_vsthost_artefacts/${CONFIG}"
+VST3_BUNDLE="${ARTEFACTS_DIR}/VST3/step-vsthost.vst3"
+AU_BUNDLE="${ARTEFACTS_DIR}/AU/step-vsthost.component"
 
 declare -a TARGET_BUNDLES=()
 declare -a TARGET_FORMATS=()
@@ -189,7 +189,7 @@ if [[ -z "${OUT_DIR}" ]]; then
 fi
 mkdir -p "${OUT_DIR}"
 
-STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mlrvst-notary-XXXXXX")"
+STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/step-vsthost-notary-XXXXXX")"
 cleanup() {
     rm -rf "${STAGE_DIR}"
 }
@@ -228,7 +228,7 @@ for i in "${!TARGET_BUNDLES[@]}"; do
     codesign -dv --verbose=4 "${bundle}" 2>&1 | sed -n '1,20p'
 
     if [[ "${SKIP_NOTARIZE}" -eq 0 ]]; then
-        NOTARY_ZIP="${STAGE_DIR}/mlrVST-${format}-notary.zip"
+        NOTARY_ZIP="${STAGE_DIR}/step-vsthost-${format}-notary.zip"
         echo "Preparing notarization archive: ${NOTARY_ZIP}"
         ditto -c -k --keepParent "${bundle}" "${NOTARY_ZIP}"
 
@@ -242,7 +242,7 @@ for i in "${!TARGET_BUNDLES[@]}"; do
         fi
     fi
 
-    DIST_ZIP="${OUT_DIR}/mlrVST-macos-${ARCH}-${format}-${TIMESTAMP}.zip"
+    DIST_ZIP="${OUT_DIR}/step-vsthost-macos-${ARCH}-${format}-${TIMESTAMP}.zip"
     echo "Creating distributable zip: ${DIST_ZIP}"
     ditto -c -k --keepParent "${bundle}" "${DIST_ZIP}"
 done
