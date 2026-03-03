@@ -362,6 +362,7 @@ public:
     };
     BeatSpaceVisualState getBeatSpaceVisualState() const;
     juce::Image getBeatSpaceTablePreviewImage() const;
+    juce::Image getBeatSpaceClusterOverlayImage() const;
     juce::Image getBeatSpaceConfidencePreviewImage() const;
     bool isBeatSpaceReady() const;
     void beatSpaceSelectChannel(int channel);
@@ -585,11 +586,14 @@ private:
     bool beatSpaceCategoryAnchorsReady = false;
     bool beatSpaceColorClustersReady = false;
     bool beatSpaceMicrotonicExactMapping = false;
+    bool beatSpacePersistentLayoutLoaded = false;
+    std::atomic<int> pendingBeatSpaceStartupApply{0};
     bool beatSpaceLinkAllChannels = false;
     bool beatSpaceConfidenceOverlayEnabled = true;
     bool beatSpacePathOverlayEnabled = true;
     BeatSpaceRandomizeMode beatSpaceRandomizeMode = BeatSpaceRandomizeMode::WithinCategory;
     juce::Image beatSpaceTablePreviewImage;
+    juce::Image beatSpaceClusterOverlayImage;
     juce::Image beatSpaceConfidencePreviewImage;
     int beatSpaceSelectedChannel = 0;
     int beatSpacePathRecordArmedChannel = -1;
@@ -633,6 +637,9 @@ private:
     std::atomic<float>* pitchSmoothingParam = nullptr;
     std::atomic<float>* outputRoutingParam = nullptr;
     std::atomic<float>* soundTouchEnabledParam = nullptr;
+    std::atomic<float>* kitScaleEnabledParam = nullptr;
+    std::atomic<float>* kitScaleModeParam = nullptr;
+    std::atomic<float>* kitScaleRootParam = nullptr;
     std::array<std::atomic<float>*, MaxStrips> stripVolumeParams{};
     std::array<std::atomic<float>*, MaxStrips> stripPanParams{};
     std::array<std::atomic<float>*, MaxStrips> stripSpeedParams{};
@@ -737,6 +744,10 @@ private:
                              juce::MidiBuffer& midi);
     void setMomentaryScratchHold(bool shouldEnable);
     void setMomentaryStutterHold(bool shouldEnable);
+    bool isGlobalKitScaleQuantizeEnabled() const;
+    ModernAudioEngine::PitchScale getGlobalKitPitchScale() const;
+    int getGlobalKitPitchRootSemitone() const;
+    float quantizePitchSemitonesToGlobalKit(float semitones) const;
     
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     void cacheParameterPointers();
@@ -807,7 +818,10 @@ private:
     void applyMomentaryStutterMacro(const juce::AudioPlayHead::PositionInfo& posInfo);
     void restoreMomentaryStutterMacroBaseline();
     bool getHostSyncSnapshot(double& outPpq, double& outTempo) const;
-    void performPresetLoad(int presetIndex, double hostPpqSnapshot, double hostTempoSnapshot);
+    void performPresetLoad(int presetIndex,
+                           double hostPpqSnapshot,
+                           double hostTempoSnapshot,
+                           bool resetRuntimeState = true);
     struct PresetSaveRequest
     {
         int presetIndex = -1;
@@ -830,6 +844,14 @@ private:
     void requestSubPresetRecallQuantized(int mainPresetIndex, int subPresetSlot, bool sequenceDriven);
     void updateSubPresetQuantizedRecall(const juce::AudioPlayHead::PositionInfo& posInfo, int numSamples);
     void processPendingSubPresetApply();
+    void appendBeatSpaceStateToPresetXml(juce::XmlElement& presetXml,
+                                         double hostPpqSnapshot,
+                                         double hostTempoSnapshot,
+                                         double nowMs) const;
+    void loadBeatSpaceStateFromPresetXml(const juce::XmlElement& presetXml,
+                                         double hostPpqSnapshot,
+                                         double hostTempoSnapshot,
+                                         double nowMs);
 
     // Row 0, col 8: global momentary scratch modifier.
     bool momentaryScratchHoldActive = false;
@@ -914,6 +936,7 @@ private:
     std::atomic<int> pendingSubPresetApplyMainPreset{-1};
     std::atomic<int> pendingSubPresetApplySlot{-1};
     std::atomic<int> pendingPresetLoadIndex{-1};
+    uint32_t pendingPresetLoadQueuedAtMs = 0;
     juce::ThreadPool presetSaveThreadPool{1};
     juce::CriticalSection presetSaveResultLock;
     std::vector<PresetSaveResult> presetSaveResults;

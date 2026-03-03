@@ -31,6 +31,9 @@ struct GlobalParameterSnapshot
     float limiterEnabled = 0.0f;
     float pitchSmoothing = 0.05f;
     float outputRouting = 0.0f;
+    float kitScaleEnabled = 0.0f;
+    float kitScaleMode = 0.0f;
+    float kitScaleRoot = 0.0f;
 };
 
 bool isPresetFileSizeValid(const juce::File& file, int64_t maxBytes)
@@ -112,6 +115,12 @@ GlobalParameterSnapshot captureGlobalParameters(juce::AudioProcessorValueTreeSta
         snapshot.pitchSmoothing = *p;
     if (auto* p = parameters.getRawParameterValue("outputRouting"))
         snapshot.outputRouting = *p;
+    if (auto* p = parameters.getRawParameterValue("kitScaleEnabled"))
+        snapshot.kitScaleEnabled = *p;
+    if (auto* p = parameters.getRawParameterValue("kitScaleMode"))
+        snapshot.kitScaleMode = *p;
+    if (auto* p = parameters.getRawParameterValue("kitScaleRoot"))
+        snapshot.kitScaleRoot = *p;
     return snapshot;
 }
 
@@ -131,6 +140,22 @@ void restoreGlobalParameters(juce::AudioProcessorValueTreeState& parameters, con
             param->setValueNotifyingHost(juce::jlimit(0.0f, 1.0f, ranged->convertTo0to1(snapshot.outputRouting)));
         else
             param->setValueNotifyingHost(snapshot.outputRouting > 0.5f ? 1.0f : 0.0f);
+    }
+    if (auto* param = parameters.getParameter("kitScaleEnabled"))
+        param->setValueNotifyingHost(snapshot.kitScaleEnabled > 0.5f ? 1.0f : 0.0f);
+    if (auto* param = parameters.getParameter("kitScaleMode"))
+    {
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(param))
+            param->setValueNotifyingHost(juce::jlimit(0.0f, 1.0f, ranged->convertTo0to1(snapshot.kitScaleMode)));
+        else
+            param->setValueNotifyingHost(snapshot.kitScaleMode > 0.5f ? 1.0f : 0.0f);
+    }
+    if (auto* param = parameters.getParameter("kitScaleRoot"))
+    {
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(param))
+            param->setValueNotifyingHost(juce::jlimit(0.0f, 1.0f, ranged->convertTo0to1(snapshot.kitScaleRoot)));
+        else
+            param->setValueNotifyingHost(snapshot.kitScaleRoot > 0.5f ? 1.0f : 0.0f);
     }
 }
 
@@ -510,7 +535,8 @@ bool savePreset(int presetIndex,
                 int maxStrips,
                 ModernAudioEngine* audioEngine,
                 juce::AudioProcessorValueTreeState& parameters,
-                const juce::File* currentStripFiles)
+                const juce::File* currentStripFiles,
+                const std::function<void(juce::XmlElement&)>& onBeforeWrite)
 {
     if (presetIndex < 0 || presetIndex >= kMaxPresetSlots || audioEngine == nullptr || currentStripFiles == nullptr)
         return false;
@@ -729,6 +755,8 @@ bool savePreset(int presetIndex,
     auto* globalsXml = preset.createNewChildElement("Globals");
     if (auto* masterVol = parameters.getRawParameterValue("masterVolume"))
         globalsXml->setAttribute("masterVolume", *masterVol);
+    if (onBeforeWrite)
+        onBeforeWrite(preset);
 
         if (writePresetAtomically(preset, presetFile))
         {
@@ -759,7 +787,9 @@ bool loadPreset(int presetIndex,
                 juce::AudioProcessorValueTreeState& parameters,
                 const std::function<bool(int, const juce::File&)>& loadSampleToStrip,
                 double hostPpqSnapshot,
-                double hostTempoSnapshot)
+                double hostTempoSnapshot,
+                bool preservePlaybackState,
+                const std::function<void(const juce::XmlElement&)>& onAfterLoad)
 {
     if (presetIndex < 0 || presetIndex >= kMaxPresetSlots || audioEngine == nullptr)
         return false;
@@ -835,6 +865,34 @@ bool loadPreset(int presetIndex,
         const double recallTempo = (std::isfinite(hostTempoSnapshot) && hostTempoSnapshot > 0.0)
             ? hostTempoSnapshot
             : audioEngine->getCurrentTempo();
+
+        struct StripPlaybackSnapshot
+        {
+            bool valid = false;
+            bool isPlaying = false;
+            bool ppqAnchored = false;
+            double ppqOffsetBeats = 0.0;
+            int markerColumn = 0;
+        };
+        std::array<StripPlaybackSnapshot, ModernAudioEngine::MaxStrips> playbackSnapshot{};
+        if (preservePlaybackState)
+        {
+            for (int i = 0; i < safeMaxStrips; ++i)
+            {
+                auto* strip = audioEngine->getStrip(i);
+                if (strip == nullptr)
+                    continue;
+
+                auto& snapshot = playbackSnapshot[static_cast<size_t>(i)];
+                snapshot.valid = true;
+                snapshot.isPlaying = strip->isPlaying();
+                snapshot.ppqAnchored = strip->isPpqTimelineAnchored();
+                snapshot.ppqOffsetBeats = strip->getPpqTimelineOffsetBeats();
+                snapshot.markerColumn = juce::jlimit(0,
+                                                     ModernAudioEngine::MaxColumns - 1,
+                                                     strip->getCurrentColumn());
+            }
+        }
 
         std::vector<bool> stripSeen(static_cast<size_t>(safeMaxStrips), false);
         for (auto* stripXml : preset->getChildWithTagNameIterator("Strip"))
@@ -914,12 +972,23 @@ bool loadPreset(int presetIndex,
         int groupId = stripXml->getIntAttribute("group", -1);
         audioEngine->assignStripToGroup(stripIndex, groupId);
 
-        const bool restorePlayingRequested = stripXml->getBoolAttribute("isPlaying", false);
+        bool restorePlayingRequested = stripXml->getBoolAttribute("isPlaying", false);
+        int restoreMarkerColumn = clampedInt(stripXml->getIntAttribute("playbackColumn", safeLoopStart),
+                                             0, ModernAudioEngine::MaxColumns - 1, safeLoopStart);
+        bool restorePpqAnchored = stripXml->getBoolAttribute("ppqTimelineAnchored", false);
+        double restorePpqOffsetBeats = stripXml->getDoubleAttribute("ppqTimelineOffsetBeats", 0.0);
+        if (preservePlaybackState)
+        {
+            const auto& snapshot = playbackSnapshot[static_cast<size_t>(stripIndex)];
+            if (snapshot.valid)
+            {
+                restorePlayingRequested = snapshot.isPlaying;
+                restoreMarkerColumn = snapshot.markerColumn;
+                restorePpqAnchored = snapshot.ppqAnchored;
+                restorePpqOffsetBeats = snapshot.ppqOffsetBeats;
+            }
+        }
         const bool restorePlaying = canRecallPlayingState && restorePlayingRequested;
-        const int restoreMarkerColumn = clampedInt(stripXml->getIntAttribute("playbackColumn", safeLoopStart),
-                                                   0, ModernAudioEngine::MaxColumns - 1, safeLoopStart);
-        const bool restorePpqAnchored = stripXml->getBoolAttribute("ppqTimelineAnchored", false);
-        const double restorePpqOffsetBeats = stripXml->getDoubleAttribute("ppqTimelineOffsetBeats", 0.0);
         const int64_t restoreGlobalSample = audioEngine->getGlobalSampleCount();
         const double restoreTimelineBeat = recallPpq;
         const double restoreTempo = recallTempo;
@@ -1167,6 +1236,8 @@ bool loadPreset(int presetIndex,
     {
         if (stripSeen[static_cast<size_t>(i)])
             continue;
+        if (preservePlaybackState)
+            continue;
 
         if (auto* strip = audioEngine->getStrip(i))
             resetStripToDefaultState(i, *strip, *audioEngine, parameters);
@@ -1198,40 +1269,46 @@ bool loadPreset(int presetIndex,
         }
     }
 
-    for (int i = 0; i < ModernAudioEngine::MaxPatterns; ++i)
-        audioEngine->clearPattern(i);
-
-    if (auto* patternsXml = preset->getChildByName("Patterns"))
+    if (!preservePlaybackState)
     {
-        const double nowBeat = audioEngine->getTimelineBeat();
-        for (auto* patternXml : patternsXml->getChildIterator())
+        for (int i = 0; i < ModernAudioEngine::MaxPatterns; ++i)
+            audioEngine->clearPattern(i);
+
+        if (auto* patternsXml = preset->getChildByName("Patterns"))
         {
-            if (patternXml->getTagName() != "Pattern")
-                continue;
-            const int index = patternXml->getIntAttribute("index", -1);
-            auto* pattern = audioEngine->getPattern(index);
-            if (!pattern)
-                continue;
-
-            std::vector<PatternRecorder::Event> events;
-            for (auto* eventXml : patternXml->getChildIterator())
+            const double nowBeat = audioEngine->getTimelineBeat();
+            for (auto* patternXml : patternsXml->getChildIterator())
             {
-                if (eventXml->getTagName() != "Event")
+                if (patternXml->getTagName() != "Pattern")
                     continue;
-                PatternRecorder::Event e{};
-                e.stripIndex = eventXml->getIntAttribute("strip", 0);
-                e.column = eventXml->getIntAttribute("column", 0);
-                e.time = eventXml->getDoubleAttribute("time", 0.0);
-                e.isNoteOn = eventXml->getBoolAttribute("noteOn", true);
-                events.push_back(e);
-            }
+                const int index = patternXml->getIntAttribute("index", -1);
+                auto* pattern = audioEngine->getPattern(index);
+                if (!pattern)
+                    continue;
 
-            const int lengthBeats = patternXml->getIntAttribute("lengthBeats", 4);
-            pattern->setEventsSnapshot(events, lengthBeats);
-            if (canRecallPlayingState && patternXml->getBoolAttribute("isPlaying", false) && !events.empty())
-                pattern->startPlayback(nowBeat);
+                std::vector<PatternRecorder::Event> events;
+                for (auto* eventXml : patternXml->getChildIterator())
+                {
+                    if (eventXml->getTagName() != "Event")
+                        continue;
+                    PatternRecorder::Event e{};
+                    e.stripIndex = eventXml->getIntAttribute("strip", 0);
+                    e.column = eventXml->getIntAttribute("column", 0);
+                    e.time = eventXml->getDoubleAttribute("time", 0.0);
+                    e.isNoteOn = eventXml->getBoolAttribute("noteOn", true);
+                    events.push_back(e);
+                }
+
+                const int lengthBeats = patternXml->getIntAttribute("lengthBeats", 4);
+                pattern->setEventsSnapshot(events, lengthBeats);
+                if (canRecallPlayingState && patternXml->getBoolAttribute("isPlaying", false) && !events.empty())
+                    pattern->startPlayback(nowBeat);
+            }
         }
     }
+
+    if (onAfterLoad)
+        onAfterLoad(*preset);
 
         DBG("Preset " << (presetIndex + 1) << " loaded");
         return true;

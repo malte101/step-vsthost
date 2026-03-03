@@ -104,7 +104,21 @@ bool isLikelyMicrotonicPlugin(const juce::String& pluginName)
 
 constexpr const char* kGlobalSettingsKey = "GlobalSettingsXml";
 
+juce::File getGlobalSettingsDirectory()
+{
+    // Keep global settings in a dedicated app-specific folder, separate from
+    // preset files and independent from mlrVST paths.
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+        .getChildFile("step-vsthost")
+        .getChildFile("Settings");
+}
+
 juce::File getGlobalSettingsFile()
+{
+    return getGlobalSettingsDirectory().getChildFile("GlobalSettings.xml");
+}
+
+juce::File getLegacyPresetGlobalSettingsFile()
 {
     auto presetsRoot = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
         .getChildFile("Library")
@@ -115,7 +129,7 @@ juce::File getGlobalSettingsFile()
     return presetsRoot.getChildFile("GlobalSettings.xml");
 }
 
-juce::File getLegacyGlobalSettingsFile()
+juce::File getLegacyAppSupportGlobalSettingsFile()
 {
     return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
         .getChildFile("step-vsthost")
@@ -137,23 +151,44 @@ juce::PropertiesFile::Options getLegacySettingsOptions()
 
 std::unique_ptr<juce::XmlElement> loadGlobalSettingsXml()
 {
-    auto settingsFile = getGlobalSettingsFile();
+    const auto settingsFile = getGlobalSettingsFile();
     if (settingsFile.existsAsFile())
     {
         if (auto xml = juce::XmlDocument::parse(settingsFile))
             return xml;
     }
 
-    auto legacySettingsFile = getLegacyGlobalSettingsFile();
-    if (legacySettingsFile.existsAsFile())
+    // Migrate from legacy locations when needed.
+    const std::array<juce::File, 2> legacyFiles {
+        getLegacyPresetGlobalSettingsFile(),
+        getLegacyAppSupportGlobalSettingsFile()
+    };
+    for (const auto& legacySettingsFile : legacyFiles)
     {
+        if (!legacySettingsFile.existsAsFile())
+            continue;
         if (auto xml = juce::XmlDocument::parse(legacySettingsFile))
+        {
+            auto settingsDir = settingsFile.getParentDirectory();
+            if (!settingsDir.exists())
+                settingsDir.createDirectory();
+            xml->writeTo(settingsFile);
             return xml;
+        }
     }
 
     juce::PropertiesFile legacyProps(getLegacySettingsOptions());
     if (legacyProps.isValidFile())
-        return legacyProps.getXmlValue(kGlobalSettingsKey);
+    {
+        if (auto xml = legacyProps.getXmlValue(kGlobalSettingsKey))
+        {
+            auto settingsDir = settingsFile.getParentDirectory();
+            if (!settingsDir.exists())
+                settingsDir.createDirectory();
+            xml->writeTo(settingsFile);
+            return xml;
+        }
+    }
 
     return nullptr;
 }
@@ -166,13 +201,7 @@ void saveGlobalSettingsXml(const juce::XmlElement& xml)
         settingsDir.createDirectory();
     xml.writeTo(settingsFile);
 
-    auto legacyFile = getLegacyGlobalSettingsFile();
-    auto legacyDir = legacyFile.getParentDirectory();
-    if (!legacyDir.exists())
-        legacyDir.createDirectory();
-    if (legacyFile != settingsFile)
-        xml.writeTo(legacyFile);
-
+    // Keep the JUCE properties mirror for backward compatibility only.
     juce::PropertiesFile legacyProps(getLegacySettingsOptions());
     if (legacyProps.isValidFile())
     {
@@ -199,13 +228,16 @@ void appendGlobalSettingsDiagnostic(const juce::String& tag, const juce::XmlElem
 
 constexpr juce::int64 kPersistentGlobalControlsSaveDebounceMs = 350;
 
-constexpr std::array<const char*, 6> kPersistentGlobalControlParameterIds {
+constexpr std::array<const char*, 9> kPersistentGlobalControlParameterIds {
     "masterVolume",
     "limiterThreshold",
     "limiterEnabled",
     "pitchSmoothing",
     "outputRouting",
-    "soundTouchEnabled"
+    "soundTouchEnabled",
+    "kitScaleEnabled",
+    "kitScaleMode",
+    "kitScaleRoot"
 };
 
 constexpr int kHostedCcVolume = 7;   // Channel Volume (MSB)
@@ -235,6 +267,80 @@ constexpr std::array<const char*, StepVstHostAudioProcessor::BeatSpaceChannels> 
     "Percussion",
     "Misc"
 };
+
+std::array<bool, 12> buildPitchClassMaskForScale(ModernAudioEngine::PitchScale scale, int rootSemitone)
+{
+    std::array<bool, 12> mask{};
+    mask.fill(false);
+    const int root = juce::jlimit(0, 11, rootSemitone);
+    auto setDegree = [&mask, root](int degree)
+    {
+        mask[static_cast<size_t>((root + degree) % 12)] = true;
+    };
+
+    switch (scale)
+    {
+        case ModernAudioEngine::PitchScale::Major:
+            for (const int degree : std::array<int, 7>{ 0, 2, 4, 5, 7, 9, 11 }) setDegree(degree);
+            break;
+        case ModernAudioEngine::PitchScale::Minor:
+            for (const int degree : std::array<int, 7>{ 0, 2, 3, 5, 7, 8, 10 }) setDegree(degree);
+            break;
+        case ModernAudioEngine::PitchScale::Dorian:
+            for (const int degree : std::array<int, 7>{ 0, 2, 3, 5, 7, 9, 10 }) setDegree(degree);
+            break;
+        case ModernAudioEngine::PitchScale::PentatonicMinor:
+            for (const int degree : std::array<int, 5>{ 0, 3, 5, 7, 10 }) setDegree(degree);
+            break;
+        case ModernAudioEngine::PitchScale::Chromatic:
+        default:
+            mask.fill(true);
+            break;
+    }
+    return mask;
+}
+
+float quantizeBeatSpaceOscFreqPreserveOctave(float normalized,
+                                             int parameterSteps,
+                                             ModernAudioEngine::PitchScale scale,
+                                             int rootSemitone)
+{
+    const float clamped = juce::jlimit(0.0f, 1.0f, normalized);
+    if (parameterSteps <= 1 || scale == ModernAudioEngine::PitchScale::Chromatic)
+        return clamped;
+
+    const int maxStep = parameterSteps - 1;
+    if (maxStep < 12)
+        return clamped;
+
+    const int rawStep = juce::jlimit(0, maxStep, static_cast<int>(std::lround(clamped * static_cast<float>(maxStep))));
+    const int octave = rawStep / 12;
+    const auto allowed = buildPitchClassMaskForScale(scale, rootSemitone);
+
+    int bestStep = rawStep;
+    int bestDistance = std::numeric_limits<int>::max();
+    bool foundCandidate = false;
+
+    for (int pitchClass = 0; pitchClass < 12; ++pitchClass)
+    {
+        if (!allowed[static_cast<size_t>(pitchClass)])
+            continue;
+        const int candidateStep = (octave * 12) + pitchClass;
+        if (candidateStep < 0 || candidateStep > maxStep)
+            continue;
+        const int distance = std::abs(candidateStep - rawStep);
+        if (!foundCandidate || distance < bestDistance || (distance == bestDistance && candidateStep < bestStep))
+        {
+            bestStep = candidateStep;
+            bestDistance = distance;
+            foundCandidate = true;
+        }
+    }
+
+    if (!foundCandidate)
+        return clamped;
+    return static_cast<float>(bestStep) / static_cast<float>(maxStep);
+}
 
 juce::String normalizeParameterToken(const juce::String& text)
 {
@@ -1790,6 +1896,9 @@ void StepVstHostAudioProcessor::cacheParameterPointers()
     pitchSmoothingParam = parameters.getRawParameterValue("pitchSmoothing");
     outputRoutingParam = parameters.getRawParameterValue("outputRouting");
     soundTouchEnabledParam = parameters.getRawParameterValue("soundTouchEnabled");
+    kitScaleEnabledParam = parameters.getRawParameterValue("kitScaleEnabled");
+    kitScaleModeParam = parameters.getRawParameterValue("kitScaleMode");
+    kitScaleRootParam = parameters.getRawParameterValue("kitScaleRoot");
 
     for (int i = 0; i < MaxStrips; ++i)
     {
@@ -1906,9 +2015,50 @@ StepVstHostAudioProcessor::PitchControlMode StepVstHostAudioProcessor::getPitchC
     return PitchControlMode::PitchShift;
 }
 
+bool StepVstHostAudioProcessor::isGlobalKitScaleQuantizeEnabled() const
+{
+    return kitScaleEnabledParam != nullptr
+        && kitScaleEnabledParam->load(std::memory_order_acquire) > 0.5f;
+}
+
+ModernAudioEngine::PitchScale StepVstHostAudioProcessor::getGlobalKitPitchScale() const
+{
+    const int scaleIndex = juce::jlimit(
+        0,
+        static_cast<int>(ModernAudioEngine::PitchScale::PentatonicMinor),
+        (kitScaleModeParam != nullptr)
+            ? static_cast<int>(std::round(kitScaleModeParam->load(std::memory_order_acquire)))
+            : 0);
+    return static_cast<ModernAudioEngine::PitchScale>(scaleIndex);
+}
+
+int StepVstHostAudioProcessor::getGlobalKitPitchRootSemitone() const
+{
+    return juce::jlimit(
+        0,
+        11,
+        (kitScaleRootParam != nullptr)
+            ? static_cast<int>(std::round(kitScaleRootParam->load(std::memory_order_acquire)))
+            : 0);
+}
+
+float StepVstHostAudioProcessor::quantizePitchSemitonesToGlobalKit(float semitones) const
+{
+    const float clamped = juce::jlimit(-24.0f, 24.0f, semitones);
+    if (!isGlobalKitScaleQuantizeEnabled())
+        return clamped;
+    return juce::jlimit(
+        -24.0f,
+        24.0f,
+        ModernAudioEngine::quantizeSemitonesToScale(
+            clamped,
+            getGlobalKitPitchScale(),
+            getGlobalKitPitchRootSemitone()));
+}
+
 void StepVstHostAudioProcessor::applyPitchControlToStrip(EnhancedAudioStrip& strip, float semitones)
 {
-    const float clampedSemitones = juce::jlimit(-24.0f, 24.0f, semitones);
+    const float clampedSemitones = quantizePitchSemitonesToGlobalKit(semitones);
     const float ratio = juce::jlimit(0.125f, 4.0f, std::pow(2.0f, clampedSemitones / 12.0f));
     const bool stripIsStepMode = (strip.getPlayMode() == EnhancedAudioStrip::PlayMode::Step);
 
@@ -2083,6 +2233,26 @@ juce::AudioProcessorValueTreeState::ParameterLayout StepVstHostAudioProcessor::c
         "SoundTouch Enabled",
         true,
         globalBoolAttrs));
+
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        "kitScaleEnabled",
+        "Kit Scale Enabled",
+        false,
+        globalBoolAttrs));
+
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        "kitScaleMode",
+        "Kit Scale Mode",
+        juce::StringArray{"Chromatic", "Major", "Minor", "Dorian", "Pentatonic"},
+        0,
+        globalChoiceAttrs));
+
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        "kitScaleRoot",
+        "Kit Scale Root",
+        juce::StringArray{"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"},
+        0,
+        globalChoiceAttrs));
     
     for (int i = 0; i < MaxStrips; ++i)
     {
@@ -2299,6 +2469,10 @@ void StepVstHostAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         }
     }
 
+    audioEngine->setGlobalPitchScaleQuantizeEnabled(isGlobalKitScaleQuantizeEnabled());
+    audioEngine->setGlobalPitchScale(getGlobalKitPitchScale());
+    audioEngine->setGlobalPitchRootSemitone(getGlobalKitPitchRootSemitone());
+
     // Apply any pending loop enter/exit actions that were quantized to timeline.
     applyPendingLoopChanges(posInfo);
     applyPendingBarChanges(posInfo);
@@ -2439,6 +2613,14 @@ void StepVstHostAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
         appendDefaultPathsToState(state);
         appendHostedLaneMidiToState(state);
         appendControlPagesToState(state);
+        state.setProperty(
+            "activeMainPresetIndex",
+            juce::jlimit(0, MaxPresetSlots - 1, getActiveMainPresetIndexForSubPresets()),
+            nullptr);
+        state.setProperty(
+            "activeSubPresetSlot",
+            juce::jlimit(0, SubPresetSlots - 1, activeSubPresetSlot),
+            nullptr);
         
         if (!state.isValid())
             return;
@@ -2471,6 +2653,20 @@ void StepVstHostAudioProcessor::setStateInformation(const void* data, int sizeIn
             loadDefaultPathsFromState(state);
             loadHostedLaneMidiFromState(state);
             loadControlPagesFromState(state);
+            activeMainPresetIndex = juce::jlimit(
+                0,
+                MaxPresetSlots - 1,
+                static_cast<int>(state.getProperty(
+                    "activeMainPresetIndex",
+                    getActiveMainPresetIndexForSubPresets())));
+            activeSubPresetSlot = juce::jlimit(
+                0,
+                SubPresetSlots - 1,
+                static_cast<int>(state.getProperty("activeSubPresetSlot", activeSubPresetSlot)));
+            ensureSubPresetsInitializedForMainPreset(activeMainPresetIndex);
+            pendingPresetLoadIndex.store(activeMainPresetIndex, std::memory_order_release);
+            pendingPresetLoadQueuedAtMs = juce::Time::getMillisecondCounter();
+            pendingBeatSpaceStartupApply.store(1, std::memory_order_release);
             loadPersistentGlobalControls();
             persistentGlobalControlsApplied = true;
             pendingPersistentGlobalControlsRestore.store(1, std::memory_order_release);
@@ -2709,9 +2905,13 @@ bool StepVstHostAudioProcessor::loadHostedInstrument(const juce::File& file, juc
         if (auto* instance = hostRack.getInstance(); instance != nullptr
             && isLikelyMicrotonicPlugin(instance->getName()))
         {
-            applyBeatSpaceDefaultChannelLayout();
-            applyBeatSpacePointToChannels(true, false);
+            if (!beatSpacePersistentLayoutLoaded)
+                applyBeatSpaceDefaultChannelLayout();
         }
+
+        // Startup BeatSpace recall is finalized from timerCallback once hosted mapping
+        // is fully ready so channel presets and dot positions are deterministic.
+        pendingBeatSpaceStartupApply.store(1, std::memory_order_release);
     }
     else
     {
@@ -2795,6 +2995,7 @@ bool StepVstHostAudioProcessor::loadDefaultHostedInstrumentIfNeeded(juce::String
 void StepVstHostAudioProcessor::rebuildBeatSpaceTablePreviewImage()
 {
     beatSpaceTablePreviewImage = {};
+    beatSpaceClusterOverlayImage = {};
     beatSpaceConfidencePreviewImage = {};
     if (beatSpaceTable.empty())
         return;
@@ -2831,6 +3032,14 @@ void StepVstHostAudioProcessor::rebuildBeatSpaceTablePreviewImage()
         const auto fallback = static_cast<size_t>(
             juce::jlimit(0, static_cast<int>(kFallbackClusterPalette.size()) - 1, cluster));
         return juce::Colour(kFallbackClusterPalette[fallback]);
+    };
+
+    auto clusterIndexAt = [&](int x, int y) -> int
+    {
+        const int cellIndex = (y * BeatSpaceTableSize) + x;
+        return hasClusterData
+            ? juce::jlimit(0, BeatSpaceChannels - 1, beatSpaceColorClusters[static_cast<size_t>(cellIndex)])
+            : 0;
     };
 
     juce::Image preview(juce::Image::RGB, BeatSpaceTableSize, BeatSpaceTableSize, true);
@@ -2876,14 +3085,20 @@ void StepVstHostAudioProcessor::rebuildBeatSpaceTablePreviewImage()
             if (hasClusterData)
             {
                 const int cellIndex = (y * BeatSpaceTableSize) + x;
-                const int cluster = juce::jlimit(
-                    0, BeatSpaceChannels - 1, beatSpaceColorClusters[static_cast<size_t>(cellIndex)]);
+                const int cluster = clusterIndexAt(x, y);
                 const auto clusterTint = clusterTintForCell(cluster);
                 const float hotspot = (cellIndex >= 0 && cellIndex < static_cast<int>(beatSpaceHotspotWeights.size()))
                     ? juce::jlimit(0.0f, 1.0f, beatSpaceHotspotWeights[static_cast<size_t>(cellIndex)])
                     : 0.0f;
-                const float tintAmount = juce::jlimit(0.18f, 0.48f, 0.24f + (0.22f * hotspot));
-                cellColour = cellColour.interpolatedWith(clusterTint, tintAmount).brighter(0.08f * hotspot);
+                const float clusterBrightness = juce::jlimit(
+                    0.18f, 0.97f, 0.20f + (0.62f * patchAverage) + (0.16f * triggerDensity));
+                const auto clusterTone = juce::Colour::fromHSV(
+                    clusterTint.getHue(),
+                    juce::jlimit(0.48f, 1.0f, juce::jmax(clusterTint.getSaturation(), 0.58f)),
+                    clusterBrightness,
+                    1.0f);
+                const float tintAmount = juce::jlimit(0.36f, 0.76f, 0.46f + (0.24f * hotspot));
+                cellColour = cellColour.interpolatedWith(clusterTone, tintAmount).brighter(0.10f * hotspot);
             }
             preview.setPixelAt(x, y, cellColour);
         }
@@ -2900,6 +3115,7 @@ void StepVstHostAudioProcessor::rebuildBeatSpaceTablePreviewImage()
             float accumG = 0.0f;
             float accumB = 0.0f;
             float accumW = 0.0f;
+            const int centerCluster = clusterIndexAt(x, y);
 
             for (int ny = -1; ny <= 1; ++ny)
             {
@@ -2911,7 +3127,16 @@ void StepVstHostAudioProcessor::rebuildBeatSpaceTablePreviewImage()
                         continue;
 
                     const bool center = (nx == 0 && ny == 0);
-                    const float tapWeight = center ? 0.40f : ((nx == 0 || ny == 0) ? 0.11f : 0.07f);
+                    const float tapWeightBase = center ? 0.40f : ((nx == 0 || ny == 0) ? 0.11f : 0.07f);
+                    float clusterWeight = 1.0f;
+                    if (hasClusterData && !center)
+                    {
+                        const int sampleCluster = clusterIndexAt(sx, sy);
+                        clusterWeight = (sampleCluster == centerCluster) ? 1.0f : 0.08f;
+                    }
+                    const float tapWeight = tapWeightBase * clusterWeight;
+                    if (tapWeight <= 1.0e-6f)
+                        continue;
                     const auto c = preview.getPixelAt(sx, sy);
                     accumR += c.getFloatRed() * tapWeight;
                     accumG += c.getFloatGreen() * tapWeight;
@@ -2937,42 +3162,88 @@ void StepVstHostAudioProcessor::rebuildBeatSpaceTablePreviewImage()
             preview.setPixelAt(x, y, smoothed.getPixelAt(x, y));
     }
 
+    juce::Image clusterOverlay(juce::Image::ARGB, BeatSpaceTableSize, BeatSpaceTableSize, true);
+    clusterOverlay.clear(clusterOverlay.getBounds(), juce::Colours::transparentBlack);
     if (hasClusterData)
     {
-        // Add subtle contour pixels at cluster boundaries so regions read clearly in the UI.
+        std::vector<uint8_t> boundaryStrength(static_cast<size_t>(tableCells), 0u);
+        auto edgeStrengthAt = [&](int x, int y) -> uint8_t
+        {
+            const int cluster = clusterIndexAt(x, y);
+            int edgeStrength = 0;
+            const auto checkNeighbor = [&](int nx, int ny)
+            {
+                if (nx < 0 || ny < 0 || nx >= BeatSpaceTableSize || ny >= BeatSpaceTableSize)
+                    return;
+                if (clusterIndexAt(nx, ny) != cluster)
+                    ++edgeStrength;
+            };
+            checkNeighbor(x - 1, y);
+            checkNeighbor(x + 1, y);
+            checkNeighbor(x, y - 1);
+            checkNeighbor(x, y + 1);
+            return static_cast<uint8_t>(juce::jlimit(0, 4, edgeStrength));
+        };
+
         for (int y = 0; y < BeatSpaceTableSize; ++y)
         {
             for (int x = 0; x < BeatSpaceTableSize; ++x)
             {
                 const int idx = (y * BeatSpaceTableSize) + x;
-                const int cluster = juce::jlimit(
-                    0, BeatSpaceChannels - 1, beatSpaceColorClusters[static_cast<size_t>(idx)]);
+                const int cluster = clusterIndexAt(x, y);
+                const auto clusterTint = clusterTintForCell(cluster);
+                const float hotspot = (idx >= 0 && idx < static_cast<int>(beatSpaceHotspotWeights.size()))
+                    ? juce::jlimit(0.0f, 1.0f, beatSpaceHotspotWeights[static_cast<size_t>(idx)])
+                    : 0.0f;
 
-                bool boundary = false;
-                if (x + 1 < BeatSpaceTableSize)
-                {
-                    const int rightCluster = juce::jlimit(
-                        0, BeatSpaceChannels - 1, beatSpaceColorClusters[static_cast<size_t>(idx + 1)]);
-                    boundary = boundary || (rightCluster != cluster);
-                }
-                if (y + 1 < BeatSpaceTableSize)
-                {
-                    const int downCluster = juce::jlimit(
-                        0, BeatSpaceChannels - 1,
-                        beatSpaceColorClusters[static_cast<size_t>(idx + BeatSpaceTableSize)]);
-                    boundary = boundary || (downCluster != cluster);
-                }
-                if (!boundary)
+                const float regionAlpha = juce::jlimit(0.06f, 0.20f, 0.09f + (0.07f * hotspot));
+                clusterOverlay.setPixelAt(x, y, clusterTint.withAlpha(regionAlpha));
+                boundaryStrength[static_cast<size_t>(idx)] = edgeStrengthAt(x, y);
+            }
+        }
+
+        for (int y = 0; y < BeatSpaceTableSize; ++y)
+        {
+            for (int x = 0; x < BeatSpaceTableSize; ++x)
+            {
+                const int idx = (y * BeatSpaceTableSize) + x;
+                const int strength = static_cast<int>(boundaryStrength[static_cast<size_t>(idx)]);
+                if (strength <= 0)
                     continue;
 
                 auto c = preview.getPixelAt(x, y);
-                c = c.darker(0.30f).withMultipliedSaturation(0.85f);
+                c = c.darker(0.52f).withMultipliedSaturation(0.68f);
                 preview.setPixelAt(x, y, c);
+
+                const float edgeAlpha = juce::jlimit(0.44f, 0.92f, 0.44f + (0.10f * static_cast<float>(strength)));
+                clusterOverlay.setPixelAt(x, y, juce::Colours::white.withAlpha(edgeAlpha));
+
+                for (int ny = -1; ny <= 1; ++ny)
+                {
+                    for (int nx = -1; nx <= 1; ++nx)
+                    {
+                        if (nx == 0 && ny == 0)
+                            continue;
+                        const int sx = x + nx;
+                        const int sy = y + ny;
+                        if (sx < 0 || sy < 0 || sx >= BeatSpaceTableSize || sy >= BeatSpaceTableSize)
+                            continue;
+                        const int nIdx = (sy * BeatSpaceTableSize) + sx;
+                        if (boundaryStrength[static_cast<size_t>(nIdx)] > 0u)
+                            continue;
+
+                        auto current = clusterOverlay.getPixelAt(sx, sy);
+                        const float featherAlpha = ((std::abs(nx) + std::abs(ny)) <= 1) ? 0.18f : 0.10f;
+                        current = current.overlaidWith(juce::Colours::white.withAlpha(featherAlpha));
+                        clusterOverlay.setPixelAt(sx, sy, current);
+                    }
+                }
             }
         }
     }
 
     beatSpaceTablePreviewImage = preview;
+    beatSpaceClusterOverlayImage = clusterOverlay;
 
     juce::Image confidence(juce::Image::ARGB, BeatSpaceTableSize, BeatSpaceTableSize, true);
     confidence.clear(confidence.getBounds(), juce::Colours::transparentBlack);
@@ -4820,6 +5091,10 @@ void StepVstHostAudioProcessor::applyBeatSpaceVectorToChannel(
     const auto idx = static_cast<size_t>(channel);
     if (!beatSpaceChannelMappingReady[idx])
         return;
+    const bool quantizeBeatSpacePitch =
+        isGlobalKitScaleQuantizeEnabled() && beatSpaceMicrotonicExactMapping;
+    const auto kitScale = getGlobalKitPitchScale();
+    const int kitRoot = getGlobalKitPitchRootSemitone();
 
     std::array<float, BeatSpaceVectorSize> appliedValues = values;
     float maxError = 0.0f;
@@ -4830,6 +5105,14 @@ void StepVstHostAudioProcessor::applyBeatSpaceVectorToChannel(
             continue;
 
         float normalized = juce::jlimit(0.0f, 1.0f, values[static_cast<size_t>(i)]);
+        if (quantizeBeatSpacePitch && i == kMicrotonicPatchOscFreqIndex)
+        {
+            normalized = quantizeBeatSpaceOscFreqPreserveOctave(
+                normalized,
+                params[paramIndex]->getNumSteps(),
+                kitScale,
+                kitRoot);
+        }
         const int steps = params[paramIndex]->getNumSteps();
         if (steps > 1 && steps <= 4096)
         {
@@ -5022,9 +5305,187 @@ StepVstHostAudioProcessor::BeatSpaceVisualState StepVstHostAudioProcessor::getBe
     return state;
 }
 
+void StepVstHostAudioProcessor::appendBeatSpaceStateToPresetXml(juce::XmlElement& presetXml,
+                                                                 double hostPpqSnapshot,
+                                                                 double hostTempoSnapshot,
+                                                                 double nowMs) const
+{
+    auto* beatXml = presetXml.createNewChildElement("BeatSpaceState");
+    beatXml->setAttribute(
+        "selectedChannel",
+        juce::jlimit(0, BeatSpaceChannels - 1, beatSpaceSelectedChannel));
+    beatXml->setAttribute("linkAllChannels", beatSpaceLinkAllChannels);
+    beatXml->setAttribute(
+        "pathRecordArmedChannel",
+        juce::jlimit(-1, BeatSpaceChannels - 1, beatSpacePathRecordArmedChannel));
+
+    const bool hasHostSync = std::isfinite(hostPpqSnapshot)
+        && std::isfinite(hostTempoSnapshot)
+        && hostTempoSnapshot > 0.0;
+    const double effectiveTempo = hasHostSync
+        ? hostTempoSnapshot
+        : juce::jmax(1.0, audioEngine ? audioEngine->getCurrentTempo() : 120.0);
+
+    for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+    {
+        const auto idx = static_cast<size_t>(channel);
+        auto* channelXml = beatXml->createNewChildElement("Channel");
+        channelXml->setAttribute("index", channel);
+        channelXml->setAttribute("pointX", beatSpaceChannelPoints[idx].x);
+        channelXml->setAttribute("pointY", beatSpaceChannelPoints[idx].y);
+
+        const auto& path = beatSpacePaths[idx];
+        channelXml->setAttribute("pathCount", path.count);
+        channelXml->setAttribute("pathActive", path.active);
+        channelXml->setAttribute("pathMode", static_cast<int>(path.mode));
+        channelXml->setAttribute("pathCycleBeats", path.cycleBeats);
+        channelXml->setAttribute("pathLoopBars", path.loopBars);
+        channelXml->setAttribute("pathPendingQuantizedStart", path.pendingQuantizedStart);
+
+        const double cycleBeats = juce::jlimit(
+            0.03125,
+            128.0,
+            path.cycleBeats > 0.0 ? path.cycleBeats
+                                   : ((path.mode == BeatSpacePathMode::QuarterNote) ? 0.25 : 4.0));
+        const double cycleMs = juce::jmax(1.0, cycleBeats * (60000.0 / juce::jmax(1.0, effectiveTempo)));
+        double phase = 0.0;
+        if (path.active && path.count > 1)
+        {
+            if (hasHostSync && std::isfinite(path.startPpq))
+            {
+                phase = std::fmod((hostPpqSnapshot - path.startPpq) / juce::jmax(1.0e-6, cycleBeats), 1.0);
+            }
+            else if (path.startMs > 0.0 && std::isfinite(path.startMs))
+            {
+                phase = std::fmod((nowMs - path.startMs) / cycleMs, 1.0);
+            }
+            if (phase < 0.0)
+                phase += 1.0;
+        }
+        channelXml->setAttribute("pathPhase", juce::jlimit(0.0, 1.0, phase));
+
+        for (int p = 0; p < BeatSpacePathMaxPoints; ++p)
+        {
+            const auto point = path.points[static_cast<size_t>(p)];
+            channelXml->setAttribute("pathX_" + juce::String(p), point.x);
+            channelXml->setAttribute("pathY_" + juce::String(p), point.y);
+        }
+    }
+}
+
+void StepVstHostAudioProcessor::loadBeatSpaceStateFromPresetXml(const juce::XmlElement& presetXml,
+                                                                 double hostPpqSnapshot,
+                                                                 double hostTempoSnapshot,
+                                                                 double nowMs)
+{
+    auto* beatXml = presetXml.getChildByName("BeatSpaceState");
+    if (beatXml == nullptr)
+        return;
+
+    beatSpaceSelectedChannel = juce::jlimit(
+        0,
+        BeatSpaceChannels - 1,
+        beatXml->getIntAttribute("selectedChannel", beatSpaceSelectedChannel));
+    beatSpaceLinkAllChannels = beatXml->getBoolAttribute("linkAllChannels", beatSpaceLinkAllChannels);
+    beatSpacePathRecordArmedChannel = juce::jlimit(
+        -1,
+        BeatSpaceChannels - 1,
+        beatXml->getIntAttribute("pathRecordArmedChannel", beatSpacePathRecordArmedChannel));
+
+    const bool hasHostSync = std::isfinite(hostPpqSnapshot)
+        && std::isfinite(hostTempoSnapshot)
+        && hostTempoSnapshot > 0.0;
+    const double effectiveTempo = hasHostSync
+        ? hostTempoSnapshot
+        : juce::jmax(1.0, audioEngine ? audioEngine->getCurrentTempo() : 120.0);
+
+    for (auto* channelXml : beatXml->getChildIterator())
+    {
+        if (channelXml->getTagName() != "Channel")
+            continue;
+
+        const int channel = juce::jlimit(
+            0,
+            BeatSpaceChannels - 1,
+            channelXml->getIntAttribute("index", 0));
+        const auto idx = static_cast<size_t>(channel);
+
+        beatSpaceChannelPoints[idx] = clampBeatSpacePointToTable({
+            channelXml->getIntAttribute("pointX", beatSpaceChannelPoints[idx].x),
+            channelXml->getIntAttribute("pointY", beatSpaceChannelPoints[idx].y)
+        });
+
+        auto& path = beatSpacePaths[idx];
+        path.count = juce::jlimit(
+            0,
+            BeatSpacePathMaxPoints,
+            channelXml->getIntAttribute("pathCount", path.count));
+        path.active = channelXml->getBoolAttribute("pathActive", path.active);
+        path.mode = static_cast<BeatSpacePathMode>(juce::jlimit(
+            0,
+            static_cast<int>(BeatSpacePathMode::OneBar),
+            channelXml->getIntAttribute("pathMode", static_cast<int>(path.mode))));
+        path.cycleBeats = juce::jlimit(
+            0.03125,
+            128.0,
+            channelXml->getDoubleAttribute("pathCycleBeats", path.cycleBeats));
+        path.loopBars = juce::jlimit(0, 32, channelXml->getIntAttribute("pathLoopBars", path.loopBars));
+        path.pendingQuantizedStart = channelXml->getBoolAttribute("pathPendingQuantizedStart", false);
+        path.recording = false;
+        path.recordStartPpq = -1.0;
+
+        for (int p = 0; p < BeatSpacePathMaxPoints; ++p)
+        {
+            path.points[static_cast<size_t>(p)] = clampBeatSpacePointToTable({
+                channelXml->getIntAttribute(
+                    "pathX_" + juce::String(p),
+                    path.points[static_cast<size_t>(p)].x),
+                channelXml->getIntAttribute(
+                    "pathY_" + juce::String(p),
+                    path.points[static_cast<size_t>(p)].y)
+            });
+        }
+
+        if (path.count < 2)
+            path.active = false;
+
+        const double phase = juce::jlimit(
+            0.0,
+            1.0,
+            channelXml->getDoubleAttribute("pathPhase", 0.0));
+        const double cycleBeats = juce::jmax(0.03125, path.cycleBeats);
+        const double cycleMs = juce::jmax(1.0, cycleBeats * (60000.0 / juce::jmax(1.0, effectiveTempo)));
+
+        if (path.active && hasHostSync)
+            path.startPpq = hostPpqSnapshot - (phase * cycleBeats);
+        else
+            path.startPpq = -1.0;
+        path.startMs = nowMs - (phase * cycleMs);
+    }
+
+    for (int i = 0; i < BeatSpaceChannels; ++i)
+        beatSpaceChannelPoints[static_cast<size_t>(i)] =
+            clampBeatSpacePointToTable(beatSpaceChannelPoints[static_cast<size_t>(i)]);
+
+    if (beatSpaceLinkAllChannels)
+    {
+        rebuildBeatSpaceLinkedOffsetsFromCurrent(beatSpaceSelectedChannel);
+        applyBeatSpaceLinkedChannelOffsets(
+            beatSpaceChannelPoints[static_cast<size_t>(beatSpaceSelectedChannel)],
+            beatSpaceSelectedChannel);
+    }
+
+    applyBeatSpacePointToChannels(true, false);
+}
+
 juce::Image StepVstHostAudioProcessor::getBeatSpaceTablePreviewImage() const
 {
     return beatSpaceTablePreviewImage;
+}
+
+juce::Image StepVstHostAudioProcessor::getBeatSpaceClusterOverlayImage() const
+{
+    return beatSpaceClusterOverlayImage;
 }
 
 juce::Image StepVstHostAudioProcessor::getBeatSpaceConfidencePreviewImage() const
@@ -6642,11 +7103,12 @@ void StepVstHostAudioProcessor::buildHostedLaneMidi(const juce::AudioPlayHead::P
             }
         }
 
-        const float pitchSemitones = juce::jlimit(
+        const float pitchSemitonesRaw = juce::jlimit(
             -24.0f, 24.0f,
             stripPitchParams[idx] != nullptr
                 ? stripPitchParams[idx]->load(std::memory_order_acquire)
                 : (strip != nullptr ? strip->getPitchShift() : 0.0f));
+        const float pitchSemitones = quantizePitchSemitonesToGlobalKit(pitchSemitonesRaw);
 
         const bool pitchMapped = applyHostedParameter(
             hostedDirectParamPitch[idx],
@@ -6850,8 +7312,6 @@ void StepVstHostAudioProcessor::buildHostedLaneMidi(const juce::AudioPlayHead::P
         for (int64_t sequenceTick = startTick; sequenceTick <= endTick; ++sequenceTick)
         {
             const double stepPpq = static_cast<double>(sequenceTick) / stepEventsPerPpq;
-            if (stepPpq < ppqStart || stepPpq >= (ppqEnd - kMinBeatEpsilon))
-                continue;
 
             const int baseStep = static_cast<int>(((sequenceTick % totalSteps) + totalSteps) % totalSteps);
             int stepWithin = baseStep;
@@ -6877,14 +7337,21 @@ void StepVstHostAudioProcessor::buildHostedLaneMidi(const juce::AudioPlayHead::P
                     break;
             }
 
-            if (!strip->stepPattern[static_cast<size_t>(stepWithin)])
+            const float startVelocity = strip->getStepSubdivisionStartVelocityAtIndex(stepWithin);
+            const float repeatVelocity = strip->getStepSubdivisionRepeatVelocityAtIndex(stepWithin);
+            const int authoredSubdivisions = juce::jmax(1, strip->getStepSubdivisionAtIndex(stepWithin));
+            const bool hasRampShape = std::abs(repeatVelocity - startVelocity) > 0.001f;
+            // Ramps must always emit repeated hosted MIDI notes, even if an older preset/state
+            // left subdivision at 1 while storing a non-flat velocity range.
+            const int subdivisions = juce::jmax(authoredSubdivisions, hasRampShape ? 2 : 1);
+            // Preserve backward compatibility for steps authored through divide/ramp tools:
+            // a shaped or subdivided step should still emit hosted MIDI even if the gate bit is off.
+            const bool stepActive = strip->stepPattern[static_cast<size_t>(stepWithin)] || subdivisions > 1;
+            if (!stepActive)
                 continue;
 
             const float probability = strip->getStepProbabilityAtIndex(stepWithin);
-            const int subdivisions = juce::jmax(1, strip->getStepSubdivisionAtIndex(stepWithin));
             const double subdivisionBeats = stepLengthPpq / static_cast<double>(subdivisions);
-            const float startVelocity = strip->getStepSubdivisionStartVelocityAtIndex(stepWithin);
-            const float repeatVelocity = strip->getStepSubdivisionRepeatVelocityAtIndex(stepWithin);
 
             for (int sub = 0; sub < subdivisions; ++sub)
             {
@@ -7610,7 +8077,7 @@ void StepVstHostAudioProcessor::applyMomentaryStutterMacro(const juce::AudioPlay
         }
         else
         {
-            strip.setPitchShift(saved.pitchShift);
+            applyPitchControlToStrip(strip, saved.pitchShift);
         }
 
         strip.setFilterAlgorithm(saved.filterAlgorithm);
@@ -8433,10 +8900,7 @@ void StepVstHostAudioProcessor::applyMomentaryStutterMacro(const juce::AudioPlay
             targetPitch = juce::jlimit(-12.0f, 12.0f, pitchBase + pitchOffsetBase + stripPitchSpread);
         }
 
-        if (stepMode)
-            applyPitchControlToStrip(*strip, targetPitch);
-        else
-            strip->setPitchShift(targetPitch);
+        applyPitchControlToStrip(*strip, targetPitch);
 
         if (strip->getPlayMode() == EnhancedAudioStrip::PlayMode::Step)
         {
@@ -8536,7 +9000,7 @@ void StepVstHostAudioProcessor::restoreMomentaryStutterMacroBaseline()
             }
             else
             {
-                strip->setPitchShift(saved.pitchShift);
+                applyPitchControlToStrip(*strip, saved.pitchShift);
             }
             strip->setFilterAlgorithm(saved.filterAlgorithm);
             strip->setFilterFrequency(saved.filterFrequency);
@@ -8818,6 +9282,9 @@ void StepVstHostAudioProcessor::appendControlPagesToState(juce::ValueTree& state
     controlPages.setProperty("momentary", isControlPageMomentary(), nullptr);
     controlPages.setProperty("swingDivision", swingDivisionSelection.load(std::memory_order_acquire), nullptr);
     controlPages.setProperty("beatSpaceMorphMs", beatSpaceMorphDurationMs, nullptr);
+    controlPages.setProperty("beatSpaceSelectedChannel", beatSpaceSelectedChannel, nullptr);
+    controlPages.setProperty("beatSpaceLinkAllChannels", beatSpaceLinkAllChannels, nullptr);
+    controlPages.setProperty("beatSpacePersistedPoints", true, nullptr);
     controlPages.setProperty("beatSpaceRandomMode", static_cast<int>(beatSpaceRandomizeMode), nullptr);
     controlPages.setProperty("beatSpaceConfidenceOverlay", beatSpaceConfidenceOverlayEnabled, nullptr);
     controlPages.setProperty("beatSpacePathOverlay", beatSpacePathOverlayEnabled, nullptr);
@@ -8825,6 +9292,14 @@ void StepVstHostAudioProcessor::appendControlPagesToState(juce::ValueTree& state
     for (int i = 0; i < BeatSpaceChannels; ++i)
     {
         const auto idx = static_cast<size_t>(i);
+        controlPages.setProperty(
+            "beatSpacePointX" + juce::String(i),
+            beatSpaceChannelPoints[idx].x,
+            nullptr);
+        controlPages.setProperty(
+            "beatSpacePointY" + juce::String(i),
+            beatSpaceChannelPoints[idx].y,
+            nullptr);
         controlPages.setProperty(
             "beatSpaceZone" + juce::String(i),
             beatSpaceChannelCategoryAssignment[idx],
@@ -9008,9 +9483,52 @@ void StepVstHostAudioProcessor::loadControlPagesFromState(const juce::ValueTree&
     auto controlPages = state.getChildWithName("ControlPages");
     if (!controlPages.isValid())
     {
+        beatSpacePersistentLayoutLoaded = false;
         savePersistentControlPages();
         return;
     }
+
+    const bool hasPersistedBeatSpaceLayoutFlag = controlPages.hasProperty("beatSpacePersistedLayout");
+    bool hasPersistedBeatSpaceLayout = hasPersistedBeatSpaceLayoutFlag
+        ? static_cast<bool>(controlPages.getProperty("beatSpacePersistedLayout", false))
+        : false;
+    const bool hasPersistedBeatSpacePointsFlag = controlPages.hasProperty("beatSpacePersistedPoints");
+    bool hasPersistedBeatSpacePoints = hasPersistedBeatSpacePointsFlag
+        ? static_cast<bool>(controlPages.getProperty("beatSpacePersistedPoints", false))
+        : false;
+    if (!hasPersistedBeatSpaceLayoutFlag)
+    {
+        for (int i = 0; i < BeatSpaceChannels; ++i)
+        {
+            const juce::String indexText(i);
+            if (controlPages.hasProperty("beatSpaceZone" + indexText)
+                || controlPages.hasProperty("beatSpaceManualCount" + indexText)
+                || controlPages.hasProperty("beatSpaceTagX_" + indexText + "_0")
+                || controlPages.hasProperty("beatSpacePresetOrder_" + indexText + "_0")
+                || controlPages.hasProperty("beatSpacePresetHidden_" + indexText + "_0")
+                || controlPages.hasProperty("beatSpacePresetLabel_" + indexText + "_0")
+                || controlPages.hasProperty("beatSpaceBookmarkUsed_" + indexText + "_0")
+                || controlPages.hasProperty("beatSpacePathCount" + indexText))
+            {
+                hasPersistedBeatSpaceLayout = true;
+                break;
+            }
+        }
+    }
+    if (!hasPersistedBeatSpacePointsFlag)
+    {
+        for (int i = 0; i < BeatSpaceChannels; ++i)
+        {
+            const juce::String indexText(i);
+            if (controlPages.hasProperty("beatSpacePointX" + indexText)
+                || controlPages.hasProperty("beatSpacePointY" + indexText))
+            {
+                hasPersistedBeatSpacePoints = true;
+                break;
+            }
+        }
+    }
+    beatSpacePersistentLayoutLoaded = hasPersistedBeatSpaceLayout && hasPersistedBeatSpacePoints;
 
     ControlPageOrder parsedOrder{};
     int parsedCount = 0;
@@ -9085,6 +9603,12 @@ void StepVstHostAudioProcessor::loadControlPagesFromState(const juce::ValueTree&
         40.0,
         2000.0,
         static_cast<double>(controlPages.getProperty("beatSpaceMorphMs", beatSpaceMorphDurationMs)));
+    beatSpaceSelectedChannel = juce::jlimit(
+        0,
+        BeatSpaceChannels - 1,
+        static_cast<int>(controlPages.getProperty("beatSpaceSelectedChannel", beatSpaceSelectedChannel)));
+    beatSpaceLinkAllChannels = static_cast<bool>(
+        controlPages.getProperty("beatSpaceLinkAllChannels", beatSpaceLinkAllChannels));
     beatSpaceRandomizeMode = static_cast<BeatSpaceRandomizeMode>(juce::jlimit(
         0,
         static_cast<int>(BeatSpaceRandomizeMode::FullWild),
@@ -9103,6 +9627,14 @@ void StepVstHostAudioProcessor::loadControlPagesFromState(const juce::ValueTree&
     for (int i = 0; i < BeatSpaceChannels; ++i)
     {
         const auto idx = static_cast<size_t>(i);
+        beatSpaceChannelPoints[idx] = clampBeatSpacePointToTable({
+            static_cast<int>(controlPages.getProperty(
+                "beatSpacePointX" + juce::String(i),
+                beatSpaceChannelPoints[idx].x)),
+            static_cast<int>(controlPages.getProperty(
+                "beatSpacePointY" + juce::String(i),
+                beatSpaceChannelPoints[idx].y))
+        });
         const auto key = "beatSpaceZone" + juce::String(i);
         const int fallbackZone = i;
         const int zone = static_cast<int>(controlPages.getProperty(key, fallbackZone));
@@ -9278,6 +9810,8 @@ void StepVstHostAudioProcessor::loadControlPagesFromState(const juce::ValueTree&
         }
     }
     rebuildBeatSpaceCategoryAnchors();
+    if (!hasPersistedBeatSpacePoints)
+        applyBeatSpaceDefaultChannelLayout();
     for (int i = 0; i < BeatSpaceChannels; ++i)
     {
         beatSpaceChannelPoints[static_cast<size_t>(i)] =
@@ -9290,6 +9824,7 @@ void StepVstHostAudioProcessor::loadControlPagesFromState(const juce::ValueTree&
             beatSpaceChannelPoints[static_cast<size_t>(selectedChannel)],
             selectedChannel);
     }
+    applyBeatSpacePointToChannels(true, false);
     savePersistentControlPages();
 }
 
@@ -9370,12 +9905,14 @@ void StepVstHostAudioProcessor::loadPersistentControlPages()
     auto xml = loadGlobalSettingsXml();
     if (xml == nullptr)
     {
+        beatSpacePersistentLayoutLoaded = false;
         suppressPersistentGlobalControlsSave.store(previousSuppress, std::memory_order_release);
         savePersistentControlPages();
         return;
     }
     if (xml->getTagName() != "GlobalSettings")
     {
+        beatSpacePersistentLayoutLoaded = false;
         suppressPersistentGlobalControlsSave.store(previousSuppress, std::memory_order_release);
         savePersistentControlPages();
         return;
@@ -9392,6 +9929,14 @@ void StepVstHostAudioProcessor::loadPersistentControlPages()
     controlPages.setProperty("swingDivision", xml->getIntAttribute("swingDivision", 1), nullptr);
     controlPages.setProperty("beatSpaceMorphMs", xml->getDoubleAttribute("beatSpaceMorphMs", beatSpaceMorphDurationMs), nullptr);
     controlPages.setProperty(
+        "beatSpaceSelectedChannel",
+        xml->getIntAttribute("beatSpaceSelectedChannel", beatSpaceSelectedChannel),
+        nullptr);
+    controlPages.setProperty(
+        "beatSpaceLinkAllChannels",
+        xml->getBoolAttribute("beatSpaceLinkAllChannels", beatSpaceLinkAllChannels),
+        nullptr);
+    controlPages.setProperty(
         "beatSpaceRandomMode",
         xml->getIntAttribute("beatSpaceRandomMode", static_cast<int>(BeatSpaceRandomizeMode::WithinCategory)),
         nullptr);
@@ -9407,9 +9952,34 @@ void StepVstHostAudioProcessor::loadPersistentControlPages()
         "beatSpacePathArmedChannel",
         xml->getIntAttribute("beatSpacePathArmedChannel", -1),
         nullptr);
+    bool hasPersistedBeatSpaceLayout = false;
+    bool hasPersistedBeatSpacePoints = xml->getBoolAttribute("beatSpacePersistedPoints", false);
     for (int i = 0; i < BeatSpaceChannels; ++i)
     {
         const auto idx = static_cast<size_t>(i);
+        const juce::String indexText(i);
+        const bool channelHasBeatSpaceData =
+            xml->hasAttribute("beatSpaceZone" + indexText)
+            || xml->hasAttribute("beatSpaceManualCount" + indexText)
+            || xml->hasAttribute("beatSpaceTagX_" + indexText + "_0")
+            || xml->hasAttribute("beatSpacePresetOrder_" + indexText + "_0")
+            || xml->hasAttribute("beatSpacePresetHidden_" + indexText + "_0")
+            || xml->hasAttribute("beatSpacePresetLabel_" + indexText + "_0")
+            || xml->hasAttribute("beatSpaceBookmarkUsed_" + indexText + "_0")
+            || xml->hasAttribute("beatSpacePathCount" + indexText);
+        hasPersistedBeatSpaceLayout = hasPersistedBeatSpaceLayout || channelHasBeatSpaceData;
+        const bool channelHasPointData =
+            xml->hasAttribute("beatSpacePointX" + indexText)
+            || xml->hasAttribute("beatSpacePointY" + indexText);
+        hasPersistedBeatSpacePoints = hasPersistedBeatSpacePoints || channelHasPointData;
+        controlPages.setProperty(
+            "beatSpacePointX" + juce::String(i),
+            xml->getIntAttribute("beatSpacePointX" + juce::String(i), beatSpaceChannelPoints[idx].x),
+            nullptr);
+        controlPages.setProperty(
+            "beatSpacePointY" + juce::String(i),
+            xml->getIntAttribute("beatSpacePointY" + juce::String(i), beatSpaceChannelPoints[idx].y),
+            nullptr);
         controlPages.setProperty(
             "beatSpaceZone" + juce::String(i),
             xml->getIntAttribute("beatSpaceZone" + juce::String(i), i),
@@ -9559,6 +10129,8 @@ void StepVstHostAudioProcessor::loadPersistentControlPages()
             }
         }
     }
+    controlPages.setProperty("beatSpacePersistedLayout", hasPersistedBeatSpaceLayout, nullptr);
+    controlPages.setProperty("beatSpacePersistedPoints", hasPersistedBeatSpacePoints, nullptr);
     state.addChild(controlPages, -1, nullptr);
 
     loadControlPagesFromState(state);
@@ -9625,6 +10197,13 @@ void StepVstHostAudioProcessor::loadPersistentGlobalControls()
     anyRestored = restoreFloatParam("pitchSmoothing", "pitchSmoothing", 0.0, 1.0) || anyRestored;
     anyRestored = restoreChoiceParam("outputRouting", "outputRouting", 0, 1) || anyRestored;
     anyRestored = restoreBoolParam("soundTouchEnabled", "soundTouchEnabled") || anyRestored;
+    anyRestored = restoreBoolParam("kitScaleEnabled", "kitScaleEnabled") || anyRestored;
+    anyRestored = restoreChoiceParam(
+        "kitScaleMode",
+        "kitScaleMode",
+        0,
+        static_cast<int>(ModernAudioEngine::PitchScale::PentatonicMinor)) || anyRestored;
+    anyRestored = restoreChoiceParam("kitScaleRoot", "kitScaleRoot", 0, 11) || anyRestored;
     suppressPersistentGlobalControlsSave.store(0, std::memory_order_release);
     persistentGlobalControlsDirty.store(0, std::memory_order_release);
 
@@ -9651,6 +10230,9 @@ void StepVstHostAudioProcessor::savePersistentControlPages() const
     xml.setAttribute("momentary", isControlPageMomentary());
     xml.setAttribute("swingDivision", swingDivisionSelection.load(std::memory_order_acquire));
     xml.setAttribute("beatSpaceMorphMs", beatSpaceMorphDurationMs);
+    xml.setAttribute("beatSpacePersistedPoints", true);
+    xml.setAttribute("beatSpaceSelectedChannel", beatSpaceSelectedChannel);
+    xml.setAttribute("beatSpaceLinkAllChannels", beatSpaceLinkAllChannels);
     xml.setAttribute("beatSpaceRandomMode", static_cast<int>(beatSpaceRandomizeMode));
     xml.setAttribute("beatSpaceConfidenceOverlay", beatSpaceConfidenceOverlayEnabled);
     xml.setAttribute("beatSpacePathOverlay", beatSpacePathOverlayEnabled);
@@ -9658,6 +10240,12 @@ void StepVstHostAudioProcessor::savePersistentControlPages() const
     for (int i = 0; i < BeatSpaceChannels; ++i)
     {
         const auto idx = static_cast<size_t>(i);
+        xml.setAttribute(
+            "beatSpacePointX" + juce::String(i),
+            beatSpaceChannelPoints[idx].x);
+        xml.setAttribute(
+            "beatSpacePointY" + juce::String(i),
+            beatSpaceChannelPoints[idx].y);
         xml.setAttribute(
             "beatSpaceZone" + juce::String(i),
             beatSpaceChannelCategoryAssignment[idx]);
@@ -9770,6 +10358,12 @@ void StepVstHostAudioProcessor::savePersistentControlPages() const
         xml.setAttribute("outputRouting", static_cast<int>(outputRoutingParam->load(std::memory_order_acquire)));
     if (soundTouchEnabledParam)
         xml.setAttribute("soundTouchEnabled", soundTouchEnabledParam->load(std::memory_order_acquire) >= 0.5f);
+    if (kitScaleEnabledParam)
+        xml.setAttribute("kitScaleEnabled", kitScaleEnabledParam->load(std::memory_order_acquire) >= 0.5f);
+    if (kitScaleModeParam)
+        xml.setAttribute("kitScaleMode", static_cast<int>(kitScaleModeParam->load(std::memory_order_acquire)));
+    if (kitScaleRootParam)
+        xml.setAttribute("kitScaleRoot", static_cast<int>(kitScaleRootParam->load(std::memory_order_acquire)));
     {
         const juce::ScopedLock lock(hostedInstrumentFileLock);
         xml.setAttribute("defaultHostedPluginPath", defaultHostedInstrumentFile.getFullPathName());
@@ -9976,6 +10570,129 @@ void StepVstHostAudioProcessor::timerCallback()
     processPendingSubPresetApply();
     updateBeatSpaceMorph();
 
+    if (pendingBeatSpaceStartupApply.load(std::memory_order_acquire) != 0)
+    {
+        if (auto* instance = hostRack.getInstance(); instance != nullptr
+            && beatSpaceDecoderReady
+            && !beatSpaceTable.empty())
+        {
+            if (refreshBeatSpaceParameterMap())
+            {
+                int mappedReadyCount = 0;
+                for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+                {
+                    if (beatSpaceChannelMappingReady[static_cast<size_t>(channel)])
+                        ++mappedReadyCount;
+                }
+
+                const bool likelyMicrotonic = isLikelyMicrotonicPlugin(instance->getName());
+                const bool startupMappingReady = likelyMicrotonic
+                    ? (mappedReadyCount == BeatSpaceChannels && beatSpaceMappingReady)
+                    : (mappedReadyCount > 0);
+
+                if (startupMappingReady)
+                {
+                    if (!beatSpacePersistentLayoutLoaded)
+                        applyBeatSpaceDefaultChannelLayout();
+
+                    if (!beatSpaceCategoryAnchorsReady)
+                        rebuildBeatSpaceCategoryAnchors();
+
+                    const int previousSelectedChannel = beatSpaceSelectedChannel;
+                    bool anyApplied = false;
+
+                    for (int channel = 0; channel < BeatSpaceChannels; ++channel)
+                    {
+                        const auto idx = static_cast<size_t>(channel);
+                        const int assignedSpace = getBeatSpaceChannelSpaceAssignment(channel);
+                        const auto spaceIdx = static_cast<size_t>(assignedSpace);
+
+                        if (!beatSpaceCategoryPresetPointsReady[spaceIdx])
+                            rebuildBeatSpaceCategoryPresetPoints();
+
+                        auto visibleSlots = getBeatSpaceVisiblePresetSlotsForSpace(assignedSpace);
+                        if (visibleSlots.empty())
+                        {
+                            normalizeBeatSpacePresetLayoutForSpace(assignedSpace);
+                            visibleSlots = getBeatSpaceVisiblePresetSlotsForSpace(assignedSpace);
+                        }
+
+                        int chosenDisplayIndex = beatSpaceLastLoadedDisplayPresetIndex[idx];
+                        int chosenSlot = 0;
+                        if (!visibleSlots.empty())
+                        {
+                            if (chosenDisplayIndex < 0 || chosenDisplayIndex >= static_cast<int>(visibleSlots.size()))
+                            {
+                                const auto currentPoint = constrainBeatSpacePointForChannel(
+                                    channel,
+                                    beatSpaceChannelPoints[idx]);
+                                float bestDistance = std::numeric_limits<float>::max();
+                                int bestDisplay = 0;
+                                for (int displayIndex = 0; displayIndex < static_cast<int>(visibleSlots.size()); ++displayIndex)
+                                {
+                                    const int slot = juce::jlimit(
+                                        0,
+                                        BeatSpacePresetSlotsPerSpace - 1,
+                                        visibleSlots[static_cast<size_t>(displayIndex)]);
+                                    auto point = beatSpaceCategoryPresetPoints[spaceIdx][static_cast<size_t>(slot)];
+                                    if (!beatSpaceCategoryPresetPointsReady[spaceIdx])
+                                    {
+                                        point = beatSpaceCategoryAnchorsReady
+                                            ? beatSpaceCategoryAnchors[spaceIdx]
+                                            : juce::Point<int> { BeatSpaceTableSize / 2, BeatSpaceTableSize / 2 };
+                                    }
+                                    const float dx = static_cast<float>(point.x - currentPoint.x);
+                                    const float dy = static_cast<float>(point.y - currentPoint.y);
+                                    const float distance = (dx * dx) + (dy * dy);
+                                    if (distance < bestDistance)
+                                    {
+                                        bestDistance = distance;
+                                        bestDisplay = displayIndex;
+                                    }
+                                }
+                                chosenDisplayIndex = bestDisplay;
+                            }
+
+                            chosenDisplayIndex = juce::jlimit(
+                                0,
+                                static_cast<int>(visibleSlots.size()) - 1,
+                                chosenDisplayIndex);
+                            chosenSlot = juce::jlimit(
+                                0,
+                                BeatSpacePresetSlotsPerSpace - 1,
+                                visibleSlots[static_cast<size_t>(chosenDisplayIndex)]);
+                        }
+
+                        auto targetPoint = beatSpaceCategoryPresetPoints[spaceIdx][static_cast<size_t>(chosenSlot)];
+                        if (!beatSpaceCategoryPresetPointsReady[spaceIdx])
+                        {
+                            targetPoint = beatSpaceCategoryAnchorsReady
+                                ? beatSpaceCategoryAnchors[spaceIdx]
+                                : juce::Point<int> { BeatSpaceTableSize / 2, BeatSpaceTableSize / 2 };
+                        }
+
+                        beatSpaceChannelPoints[idx] = constrainBeatSpacePointForChannel(channel, targetPoint);
+                        beatSpaceLastLoadedDisplayPresetIndex[idx] = chosenDisplayIndex;
+
+                        beatSpaceSelectedChannel = channel;
+                        applyBeatSpacePointToChannels(false, false);
+                        anyApplied = true;
+                    }
+
+                    beatSpaceSelectedChannel = previousSelectedChannel;
+                    if (anyApplied)
+                        savePersistentControlPages();
+                    pendingBeatSpaceStartupApply.store(0, std::memory_order_release);
+                }
+                else if (likelyMicrotonic)
+                {
+                    beatSpaceStatusMessage = "BeatSpace: waiting for full Microtonic mapping ("
+                        + juce::String(mappedReadyCount) + "/" + juce::String(BeatSpaceChannels) + ")";
+                }
+            }
+        }
+    }
+
     if (persistentGlobalControlsDirty.load(std::memory_order_acquire) != 0)
     {
         const auto nowMs = juce::Time::currentTimeMillis();
@@ -10011,12 +10728,21 @@ void StepVstHostAudioProcessor::timerCallback()
     const int pendingPreset = pendingPresetLoadIndex.load(std::memory_order_acquire);
     if (pendingPreset >= 0)
     {
-        double hostPpqSnapshot = 0.0;
-        double hostTempoSnapshot = 0.0;
-        if (getHostSyncSnapshot(hostPpqSnapshot, hostTempoSnapshot))
+        double hostPpqSnapshot = std::numeric_limits<double>::quiet_NaN();
+        double hostTempoSnapshot = std::numeric_limits<double>::quiet_NaN();
+        const bool hasHostSync = getHostSyncSnapshot(hostPpqSnapshot, hostTempoSnapshot);
+        constexpr uint32_t kPresetLoadFallbackDelayMs = 1200;
+        const uint32_t nowMs = juce::Time::getMillisecondCounter();
+        const bool allowFallbackLoad = pendingPresetLoadQueuedAtMs != 0
+            && static_cast<uint32_t>(nowMs - pendingPresetLoadQueuedAtMs) >= kPresetLoadFallbackDelayMs;
+        if (hasHostSync || allowFallbackLoad)
         {
             pendingPresetLoadIndex.store(-1, std::memory_order_release);
+            pendingPresetLoadQueuedAtMs = 0;
             performPresetLoad(pendingPreset, hostPpqSnapshot, hostTempoSnapshot);
+            loadedPresetIndex = PresetStore::presetExists(pendingPreset) ? pendingPreset : -1;
+            // Re-apply BeatSpace once hosted plugin mapping is definitely settled.
+            pendingBeatSpaceStartupApply.store(1, std::memory_order_release);
         }
     }
 
@@ -10360,7 +11086,10 @@ bool StepVstHostAudioProcessor::getHostSyncSnapshot(double& outPpq, double& outT
     return false;
 }
 
-void StepVstHostAudioProcessor::performPresetLoad(int presetIndex, double hostPpqSnapshot, double hostTempoSnapshot)
+void StepVstHostAudioProcessor::performPresetLoad(int presetIndex,
+                                                  double hostPpqSnapshot,
+                                                  double hostTempoSnapshot,
+                                                  bool resetRuntimeState)
 {
     struct ScopedSuspendProcessing
     {
@@ -10369,22 +11098,29 @@ void StepVstHostAudioProcessor::performPresetLoad(int presetIndex, double hostPp
         StepVstHostAudioProcessor& processor;
     } scopedSuspend(*this);
 
-    // Always reset to a known clean runtime state before applying preset data.
-    // This guarantees no strip audio/params leak across preset transitions.
-    resetRuntimePresetStateToDefaults();
-    loadedPresetIndex = -1;
+    if (resetRuntimeState)
+    {
+        // Always reset to a known clean runtime state before applying preset data.
+        // This guarantees no strip audio/params leak across full preset transitions.
+        resetRuntimePresetStateToDefaults();
+        loadedPresetIndex = -1;
+    }
 
     if (!PresetStore::presetExists(presetIndex))
     {
-        // Empty slot recall keeps the freshly reset runtime defaults and does
-        // not create or mutate preset files.
-        presetRefreshToken.fetch_add(1, std::memory_order_acq_rel);
+        // Empty full-preset recall keeps freshly reset defaults. For sub-preset
+        // recalls we keep current playback/state untouched when the slot is empty.
+        if (resetRuntimeState)
+            presetRefreshToken.fetch_add(1, std::memory_order_acq_rel);
         return;
     }
 
-    // Clear stale file references; preset load repopulates file-backed strips.
-    for (auto& f : currentStripFiles)
-        f = juce::File();
+    if (resetRuntimeState)
+    {
+        // Full preset loads rebuild file-backed strip state from disk.
+        for (auto& f : currentStripFiles)
+            f = juce::File();
+    }
 
     const bool loadSucceeded = PresetStore::loadPreset(
         presetIndex,
@@ -10396,11 +11132,27 @@ void StepVstHostAudioProcessor::performPresetLoad(int presetIndex, double hostPp
             return loadSampleToStrip(stripIndex, sampleFile);
         },
         hostPpqSnapshot,
-        hostTempoSnapshot);
+        hostTempoSnapshot,
+        !resetRuntimeState,
+        [this, hostPpqSnapshot, hostTempoSnapshot](const juce::XmlElement& presetXml)
+        {
+            loadBeatSpaceStateFromPresetXml(
+                presetXml,
+                hostPpqSnapshot,
+                hostTempoSnapshot,
+                juce::Time::getMillisecondCounterHiRes());
+        });
 
     if (loadSucceeded && PresetStore::presetExists(presetIndex))
+    {
         loadedPresetIndex = presetIndex;
-    presetRefreshToken.fetch_add(1, std::memory_order_acq_rel);
+        // BeatSpace category/channel points remain the authoritative source.
+        // Re-apply after any preset/sub-preset load so hosted plugin params
+        // cannot drift to stale Microtonic values.
+        applyBeatSpacePointToChannels(true, false);
+    }
+    if (resetRuntimeState)
+        presetRefreshToken.fetch_add(1, std::memory_order_acq_rel);
 }
 
 bool StepVstHostAudioProcessor::runPresetSaveRequest(const PresetSaveRequest& request)
@@ -10494,6 +11246,10 @@ bool StepVstHostAudioProcessor::saveSubPresetForMainPreset(int mainPresetIndex, 
     std::array<juce::File, MaxStrips> stripFiles{};
     for (int i = 0; i < MaxStrips; ++i)
         stripFiles[static_cast<size_t>(i)] = currentStripFiles[static_cast<size_t>(i)];
+    double hostPpqSnapshot = audioEngine->getTimelineBeat();
+    double hostTempoSnapshot = juce::jmax(1.0, audioEngine->getCurrentTempo());
+    (void) getHostSyncSnapshot(hostPpqSnapshot, hostTempoSnapshot);
+    const double nowMs = juce::Time::getMillisecondCounterHiRes();
 
     struct ScopedSuspendProcessing
     {
@@ -10506,7 +11262,15 @@ bool StepVstHostAudioProcessor::saveSubPresetForMainPreset(int mainPresetIndex, 
                                    MaxStrips,
                                    audioEngine.get(),
                                    parameters,
-                                   stripFiles.data());
+                                   stripFiles.data(),
+                                   [this, hostPpqSnapshot, hostTempoSnapshot, nowMs](juce::XmlElement& presetXml)
+                                   {
+                                       appendBeatSpaceStateToPresetXml(
+                                           presetXml,
+                                           hostPpqSnapshot,
+                                           hostTempoSnapshot,
+                                           nowMs);
+                                   });
 }
 
 void StepVstHostAudioProcessor::ensureSubPresetsInitializedForMainPreset(int mainPresetIndex)
@@ -10634,7 +11398,8 @@ void StepVstHostAudioProcessor::processPendingSubPresetApply()
     double hostPpqSnapshot = audioEngine ? audioEngine->getTimelineBeat() : 0.0;
     double hostTempoSnapshot = audioEngine ? juce::jmax(1.0, audioEngine->getCurrentTempo()) : 120.0;
     (void)getHostSyncSnapshot(hostPpqSnapshot, hostTempoSnapshot);
-    performPresetLoad(storageIndex, hostPpqSnapshot, hostTempoSnapshot);
+    if (PresetStore::presetExists(storageIndex))
+        performPresetLoad(storageIndex, hostPpqSnapshot, hostTempoSnapshot, false);
 
     loadedPresetIndex = clampedMain;
     activeMainPresetIndex = clampedMain;
@@ -10684,6 +11449,7 @@ void StepVstHostAudioProcessor::loadPreset(int presetIndex)
         }
 
         pendingPresetLoadIndex.store(-1, std::memory_order_release);
+        pendingPresetLoadQueuedAtMs = 0;
         performPresetLoad(presetIndex, hostPpqSnapshot, hostTempoSnapshot);
         loadedPresetIndex = PresetStore::presetExists(presetIndex) ? presetIndex : -1;
         ensureSubPresetsInitializedForMainPreset(presetIndex);

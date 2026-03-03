@@ -1262,6 +1262,14 @@ public:
     bool isModPitchScaleQuantize(int stripIndex) const;
     void setModPitchScale(int stripIndex, PitchScale scale);
     PitchScale getModPitchScale(int stripIndex) const;
+    static float quantizeSemitonesToScale(float semitoneValue, PitchScale scale, int rootSemitone = 0);
+    void setGlobalPitchScaleQuantizeEnabled(bool enabled);
+    bool isGlobalPitchScaleQuantizeEnabled() const;
+    void setGlobalPitchScale(PitchScale scale);
+    PitchScale getGlobalPitchScale() const;
+    void setGlobalPitchRootSemitone(int rootSemitone);
+    int getGlobalPitchRootSemitone() const;
+    float quantizePitchToGlobalScale(float semitoneValue) const;
     
     // Live recording - Continuous buffer
     void setRecordingLoopLength(int bars);  // Legacy - now per-strip
@@ -1368,6 +1376,9 @@ private:
     std::atomic<float> crossfadeLengthMs{10.0f}; // Inner-loop and capture-loop crossfade (ms)
     std::atomic<float> triggerFadeInMs{12.0f}; // Trigger fade-in de-click time (ms)
     std::atomic<int> soundTouchEnabled{1};
+    std::atomic<int> globalPitchScaleQuantizeEnabled{0};
+    std::atomic<int> globalPitchScale{static_cast<int>(PitchScale::Chromatic)};
+    std::atomic<int> globalPitchRootSemitone{0};
     
     std::atomic<double> currentTempo{120.0};
     std::atomic<int> currentTimeSigNumerator{4};

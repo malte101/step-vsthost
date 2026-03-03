@@ -145,23 +145,31 @@ int quantizeSemitoneToScaleImpl(int semitone, const std::array<int, N>& scale)
     return best;
 }
 
-float quantizePitchDeltaToScale(float semitoneDelta, ModernAudioEngine::PitchScale scale)
+float quantizePitchToScale(float semitoneValue, ModernAudioEngine::PitchScale scale, int rootSemitone)
 {
-    const int semitone = static_cast<int>(std::round(semitoneDelta));
+    const int root = juce::jlimit(0, 11, rootSemitone);
+    const int semitone = static_cast<int>(std::round(semitoneValue)) - root;
+    int quantized = semitone;
     switch (scale)
     {
         case ModernAudioEngine::PitchScale::Major:
-            return static_cast<float>(quantizeSemitoneToScaleImpl(semitone, kScaleMajor));
+            quantized = quantizeSemitoneToScaleImpl(semitone, kScaleMajor);
+            break;
         case ModernAudioEngine::PitchScale::Minor:
-            return static_cast<float>(quantizeSemitoneToScaleImpl(semitone, kScaleMinor));
+            quantized = quantizeSemitoneToScaleImpl(semitone, kScaleMinor);
+            break;
         case ModernAudioEngine::PitchScale::Dorian:
-            return static_cast<float>(quantizeSemitoneToScaleImpl(semitone, kScaleDorian));
+            quantized = quantizeSemitoneToScaleImpl(semitone, kScaleDorian);
+            break;
         case ModernAudioEngine::PitchScale::PentatonicMinor:
-            return static_cast<float>(quantizeSemitoneToScaleImpl(semitone, kScalePentMinor));
+            quantized = quantizeSemitoneToScaleImpl(semitone, kScalePentMinor);
+            break;
         case ModernAudioEngine::PitchScale::Chromatic:
         default:
-            return static_cast<float>(quantizeSemitoneToScaleImpl(semitone, kScaleChromatic));
+            quantized = quantizeSemitoneToScaleImpl(semitone, kScaleChromatic);
+            break;
     }
+    return static_cast<float>(quantized + root);
 }
 
 float quantizeSpeedRatioMusical(float unit)
@@ -8988,7 +8996,16 @@ void ModernAudioEngine::processBlock(juce::AudioBuffer<float>& buffer,
                         {
                             const auto scale = static_cast<PitchScale>(juce::jlimit(
                                 0, static_cast<int>(PitchScale::PentatonicMinor), seq.pitchScale.load(std::memory_order_acquire)));
-                            targetPitch = quantizePitchDeltaToScale(targetPitch, scale);
+                            targetPitch = quantizePitchToScale(targetPitch, scale, 0);
+                        }
+                        if (globalPitchScaleQuantizeEnabled.load(std::memory_order_acquire) != 0)
+                        {
+                            const auto globalScale = static_cast<PitchScale>(juce::jlimit(
+                                0,
+                                static_cast<int>(PitchScale::PentatonicMinor),
+                                globalPitchScale.load(std::memory_order_acquire)));
+                            const int globalRoot = juce::jlimit(0, 11, globalPitchRootSemitone.load(std::memory_order_acquire));
+                            targetPitch = quantizePitchToScale(targetPitch, globalScale, globalRoot);
                         }
                         targetPitch = juce::jlimit(-24.0f, 24.0f, targetPitch);
                         strip->setPitchShift(targetPitch);
@@ -10595,6 +10612,56 @@ ModernAudioEngine::PitchScale ModernAudioEngine::getModPitchScale(int stripIndex
     const int idx = juce::jlimit(0, static_cast<int>(PitchScale::PentatonicMinor),
                                  getActiveModSequencer(stripIndex).pitchScale.load(std::memory_order_acquire));
     return static_cast<PitchScale>(idx);
+}
+
+float ModernAudioEngine::quantizeSemitonesToScale(float semitoneValue, PitchScale scale, int rootSemitone)
+{
+    return quantizePitchToScale(semitoneValue, scale, rootSemitone);
+}
+
+void ModernAudioEngine::setGlobalPitchScaleQuantizeEnabled(bool enabled)
+{
+    globalPitchScaleQuantizeEnabled.store(enabled ? 1 : 0, std::memory_order_release);
+}
+
+bool ModernAudioEngine::isGlobalPitchScaleQuantizeEnabled() const
+{
+    return globalPitchScaleQuantizeEnabled.load(std::memory_order_acquire) != 0;
+}
+
+void ModernAudioEngine::setGlobalPitchScale(PitchScale scale)
+{
+    globalPitchScale.store(
+        juce::jlimit(0, static_cast<int>(PitchScale::PentatonicMinor), static_cast<int>(scale)),
+        std::memory_order_release);
+}
+
+ModernAudioEngine::PitchScale ModernAudioEngine::getGlobalPitchScale() const
+{
+    const int idx = juce::jlimit(
+        0,
+        static_cast<int>(PitchScale::PentatonicMinor),
+        globalPitchScale.load(std::memory_order_acquire));
+    return static_cast<PitchScale>(idx);
+}
+
+void ModernAudioEngine::setGlobalPitchRootSemitone(int rootSemitone)
+{
+    globalPitchRootSemitone.store(juce::jlimit(0, 11, rootSemitone), std::memory_order_release);
+}
+
+int ModernAudioEngine::getGlobalPitchRootSemitone() const
+{
+    return juce::jlimit(0, 11, globalPitchRootSemitone.load(std::memory_order_acquire));
+}
+
+float ModernAudioEngine::quantizePitchToGlobalScale(float semitoneValue) const
+{
+    const float clamped = juce::jlimit(-24.0f, 24.0f, semitoneValue);
+    if (!isGlobalPitchScaleQuantizeEnabled())
+        return clamped;
+    return juce::jlimit(-24.0f, 24.0f,
+                        quantizePitchToScale(clamped, getGlobalPitchScale(), getGlobalPitchRootSemitone()));
 }
 
 void ModernAudioEngine::startPatternRecording(int patternIndex)

@@ -551,16 +551,22 @@ void StepVstHostAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                 const int mainPresetIndex = getActiveMainPresetIndexForSubPresets();
                 const int previousSubSlot = juce::jlimit(0, SubPresetSlots - 1, activeSubPresetSlot);
                 activeMainPresetIndex = mainPresetIndex;
-                activeSubPresetSlot = subSlot;
+                // Keep activeSubPresetSlot on the currently applied slot until
+                // processPendingSubPresetApply() commits the recall target.
+                // This prevents edit/save operations during quantized switching
+                // from writing into the queued (not-yet-active) sub-preset.
                 ensureSubPresetsInitializedForMainPreset(mainPresetIndex);
 
                 if (!anyHeldBefore || !qualifiesForSequence)
                 {
-                    if (previousSubSlot != subSlot)
+                    if (subSlot != previousSubSlot)
                     {
-                        // Keep last edited state on slot change so toggling
-                        // back recalls the previous pattern/state reliably.
-                        saveSubPresetForMainPreset(mainPresetIndex, previousSubSlot);
+                        const bool saved = saveSubPresetForMainPreset(mainPresetIndex, previousSubSlot);
+                        if (!saved)
+                        {
+                            DBG("Sub-preset auto-save failed while switching from slot "
+                                << (previousSubSlot + 1) << " to " << (subSlot + 1));
+                        }
                     }
 
                     for (int i = 0; i < SubPresetSlots; ++i)

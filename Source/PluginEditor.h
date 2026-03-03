@@ -683,19 +683,13 @@ private:
 /**
  * GlobalControlPanel - Master controls
  */
-class GlobalControlPanel : public juce::Component,
-                           public juce::Timer
+class GlobalControlPanel : public juce::Component
 {
 public:
     GlobalControlPanel(StepVstHostAudioProcessor& p);
     ~GlobalControlPanel() override;
     
     void paint(juce::Graphics& g) override;
-    void timerCallback() override;
-    void mouseDown(const juce::MouseEvent& e) override;
-    void mouseDrag(const juce::MouseEvent& e) override;
-    void mouseUp(const juce::MouseEvent& e) override;
-    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
     void resized() override;
     void refreshFromProcessor();
     std::function<void(bool)> onTooltipsToggled;
@@ -712,10 +706,13 @@ private:
     juce::Label swingDivisionLabel;
     juce::ComboBox outputRoutingBox;
     juce::Label outputRoutingLabel;
+    juce::ToggleButton kitScaleToggle;
+    juce::ComboBox kitScaleRootBox;
+    juce::Label kitScaleRootLabel;
+    juce::ComboBox kitScaleModeBox;
+    juce::Label kitScaleModeLabel;
     juce::ToggleButton momentaryToggle;
     juce::ToggleButton soundTouchToggle;
-    juce::Label beatSpaceMorphLabel;
-    juce::Slider beatSpaceMorphSlider;
     juce::ToggleButton tooltipsToggle;
     juce::TextButton hostedLoadButton;
     juce::TextButton hostedShowGuiButton;
@@ -728,21 +725,15 @@ private:
     juce::TextButton microtonicPresetRecallButton;
     juce::TextButton microtonicPresetDeleteButton;
     juce::Label hostedStatusLabel;
-    std::array<juce::TextButton, StepVstHostAudioProcessor::BeatSpaceChannels> beatSpacePathButtons;
-    juce::Label beatSpacePreviewLabel;
-    juce::Rectangle<int> beatSpacePreviewBounds;
-    int beatSpaceDragChannel = -1;
-    bool beatSpaceDragSingleChannel = false;
-    bool beatSpaceTextOverlayEnabled = true;
-    bool beatSpacePathRecordingActive = false;
-    int beatSpacePathRecordingChannel = -1;
-    float beatSpaceWheelZoomAccumulator = 0.0f;
     juce::File hostedLastPluginFile;
     std::unique_ptr<juce::DocumentWindow> hostedEditorWindow;
     
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> masterVolumeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> limiterEnabledAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> outputRoutingAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> kitScaleEnabledAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> kitScaleRootAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> kitScaleModeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> soundTouchEnabledAttachment;
     bool globalUiReady = false;
 
@@ -754,6 +745,54 @@ private:
     void rebuildMicrotonicPresetList();
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GlobalControlPanel)
+};
+
+//==============================================================================
+/**
+ * BeatSpaceControlPanel - BeatSpace morph/path controls and preview
+ */
+class BeatSpaceControlPanel : public juce::Component,
+                              public juce::Timer
+{
+public:
+    BeatSpaceControlPanel(StepVstHostAudioProcessor& p);
+
+    void paint(juce::Graphics& g) override;
+    void timerCallback() override;
+    void mouseDown(const juce::MouseEvent& e) override;
+    void mouseDrag(const juce::MouseEvent& e) override;
+    void mouseUp(const juce::MouseEvent& e) override;
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
+    void resized() override;
+    void refreshFromProcessor();
+
+private:
+    StepVstHostAudioProcessor& processor;
+    juce::Label titleLabel;
+    juce::Label beatSpaceMorphLabel;
+    juce::Slider beatSpaceMorphSlider;
+    juce::Label microtonicPresetStripLabel;
+    juce::ComboBox microtonicPresetStripBox;
+    juce::Label microtonicPresetListLabel;
+    juce::ComboBox microtonicPresetListBox;
+    juce::TextButton microtonicPresetStoreButton;
+    juce::TextButton microtonicPresetRecallButton;
+    juce::TextButton microtonicPresetDeleteButton;
+    juce::Label microtonicPresetStatusLabel;
+    juce::TextButton beatSpaceLinkButton;
+    std::array<juce::TextButton, StepVstHostAudioProcessor::BeatSpaceChannels> beatSpacePathButtons;
+    juce::Label beatSpacePreviewLabel;
+    juce::Rectangle<int> beatSpacePreviewBounds;
+    int beatSpaceDragChannel = -1;
+    bool beatSpaceDragSingleChannel = false;
+    bool beatSpaceTextOverlayEnabled = true;
+    bool beatSpacePathRecordingActive = false;
+    int beatSpacePathRecordingChannel = -1;
+    float beatSpaceWheelZoomAccumulator = 0.0f;
+    bool beatSpaceUiReady = false;
+    void rebuildMicrotonicPresetList();
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BeatSpaceControlPanel)
 };
 
 //==============================================================================
@@ -986,6 +1025,7 @@ private:
     std::unique_ptr<MonomeGridDisplay> monomeGrid;
     std::unique_ptr<MonomeControlPanel> monomeControl;
     std::unique_ptr<GlobalControlPanel> globalControl;
+    std::unique_ptr<BeatSpaceControlPanel> beatSpaceControl;
     std::unique_ptr<MonomePagesPanel> monomePagesControl;
     std::unique_ptr<PresetControlPanel> presetControl;
     std::unique_ptr<PathsControlPanel> pathsControl;
