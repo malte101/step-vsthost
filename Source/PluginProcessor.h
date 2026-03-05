@@ -238,6 +238,7 @@ public:
     PitchControlMode getPitchControlMode() const;
     bool isPitchControlResampleMode() const { return getPitchControlMode() == PitchControlMode::Resample; }
     void applyPitchControlToStrip(EnhancedAudioStrip& strip, float semitones);
+    void applyGlobalKitScaleSettings();
     float getPitchSemitonesForDisplay(const EnhancedAudioStrip& strip) const;
     
     // Control mode (for GUI to check if level/pan/etc controls are active)
@@ -313,6 +314,7 @@ public:
         bool microtonicExactMapping = false;
         bool colorClustersReady = false;
         bool linkAllChannels = false;
+        bool categoryConstrainEnabled = false;
         bool confidenceOverlayEnabled = false;
         bool pathOverlayEnabled = true;
         int mappedChannels = 0;
@@ -345,6 +347,7 @@ public:
         std::array<int, BeatSpaceChannels> bookmarkCounts{};
         std::array<int, BeatSpaceChannels> pathPointCounts{};
         std::array<int, BeatSpaceChannels> pathLoopBars{};
+        std::array<int, BeatSpaceChannels> pathPlayModes{};
         std::array<bool, BeatSpaceChannels> pathActive{};
         std::array<std::array<juce::Point<int>, BeatSpacePathMaxPoints>, BeatSpaceChannels> pathPoints{};
     };
@@ -360,7 +363,18 @@ public:
         QuarterNote = 0,
         OneBar = 1
     };
+    enum class BeatSpacePathPlayMode
+    {
+        Normal = 0,
+        Reverse = 1,
+        PingPong = 2,
+        Random = 3,
+        RandomWalk = 4,
+        RandomSlice = 5
+    };
+    static constexpr int BeatSpaceMacroKnobCount = 8;
     BeatSpaceVisualState getBeatSpaceVisualState() const;
+    void ensureBeatSpaceVisualAssetsReady();
     juce::Image getBeatSpaceTablePreviewImage() const;
     juce::Image getBeatSpaceClusterOverlayImage() const;
     juce::Image getBeatSpaceConfidencePreviewImage() const;
@@ -380,12 +394,19 @@ public:
                                   bool morph);
     void setBeatSpaceMorphDurationMs(double durationMs);
     double getBeatSpaceMorphDurationMs() const;
+    void setBeatSpaceMacroKnobValue(int macroIndex, float value);
+    float getBeatSpaceMacroKnobValue(int macroIndex) const;
+    void resetBeatSpaceMacroKnobs();
+    void setBeatSpacePatchParamNormalized(int channel, int patchParamIndex, float normalized);
+    float getBeatSpacePatchParamNormalized(int channel, int patchParamIndex) const;
     void setBeatSpaceZoneLockStrength(int channel, float strength);
     float getBeatSpaceZoneLockStrength(int channel) const;
     void setBeatSpaceConfidenceOverlayEnabled(bool enabled);
     bool isBeatSpaceConfidenceOverlayEnabled() const;
     void setBeatSpacePathOverlayEnabled(bool enabled);
     bool isBeatSpacePathOverlayEnabled() const;
+    void setBeatSpaceCategoryConstrainEnabled(bool enabled);
+    bool isBeatSpaceCategoryConstrainEnabled() const;
     void setBeatSpacePathRecordArmedChannel(int channel);
     int getBeatSpacePathRecordArmedChannel() const;
     bool beatSpaceAddBookmark(int channel, const juce::String& tag);
@@ -399,6 +420,8 @@ public:
     bool beatSpacePathStart(int channel, BeatSpacePathMode mode);
     void beatSpacePathStop(int channel);
     bool beatSpacePathIsActive(int channel) const;
+    void beatSpacePathSetPlayMode(int channel, BeatSpacePathPlayMode playMode);
+    BeatSpacePathPlayMode beatSpacePathGetPlayMode(int channel) const;
     bool beatSpacePathRecordStart(int channel, const juce::Point<int>& point);
     bool beatSpacePathRecordAppendPoint(int channel, const juce::Point<int>& point);
     bool beatSpacePathRecordFinishAndPlay(int channel);
@@ -420,6 +443,18 @@ public:
         juce::String* errorOut = nullptr);
     bool recallMicrotonicStripPreset(int channel, int slot, juce::String* errorOut = nullptr);
     bool deleteMicrotonicStripPreset(int channel, int slot);
+    struct SiteDrumPatternPresetInfo
+    {
+        juce::String source;
+        juce::String genre;
+        juce::String name;
+        int bpm = 120;
+    };
+    std::vector<SiteDrumPatternPresetInfo> getSiteDrumPatternPresetInfos() const;
+    bool applySiteDrumPatternPreset(int presetIndex, juce::String* errorOut = nullptr);
+    bool applySiteDrumPatternPresetToCurrentSubPreset(int presetIndex, juce::String* errorOut = nullptr);
+    bool storeCurrentPatternToCurrentSubPreset(juce::String* errorOut = nullptr);
+    bool clearCurrentPatternInCurrentSubPreset(juce::String* errorOut = nullptr);
     int getBeatSpaceChannelSpaceAssignment(int channel) const;
     void setBeatSpaceChannelSpaceAssignment(int channel, int space);
     std::vector<int> getBeatSpacePresetDisplaySlotsForAssignedSpace(int channel) const;
@@ -497,6 +532,7 @@ private:
     std::array<float, MaxStrips> hostedLastDirectParamDecay{};
     std::array<float, MaxStrips> hostedLastDirectParamRelease{};
     std::array<float, MaxStrips> hostedLastDirectParamAttackAux{};
+    std::array<bool, MaxStrips> hostedStripOutputMutedLast{};
     std::array<int, MaxStrips> hostedProgramNumber{};
     std::array<std::atomic<int>, MaxStrips> hostedPendingProgramDelta{};
     std::array<double, MaxStrips> hostedTraversalRatioAtLastTick{};
@@ -508,11 +544,11 @@ private:
     static constexpr int BeatSpaceTableSize = 1000;
     static constexpr int BeatSpaceVectorSize = 73;
     static constexpr int BeatSpacePatchParamCount = 25;
-    // Quarter-octave zoom increments give finer monome/wheel control.
-    static constexpr int BeatSpaceMaxZoom = 32;
-    static constexpr int BeatSpaceZoomStepsPerOctave = 4;
+    // Eighth-octave zoom increments for smoother BeatSpace navigation.
+    static constexpr int BeatSpaceMaxZoom = 56;
+    static constexpr int BeatSpaceZoomStepsPerOctave = 8;
     static constexpr int BeatSpaceMinViewWidth = 8;
-    static constexpr int BeatSpaceMinViewHeight = 6;
+    static constexpr int BeatSpaceMinViewHeight = 8;
     static constexpr int BeatSpaceBookmarkSlots = 8;
     struct BeatSpaceCell
     {
@@ -530,6 +566,7 @@ private:
         int count = 0;
         bool active = false;
         BeatSpacePathMode mode = BeatSpacePathMode::QuarterNote;
+        BeatSpacePathPlayMode playMode = BeatSpacePathPlayMode::Normal;
         double cycleBeats = 4.0;
         int loopBars = 1;
         bool pendingQuantizedStart = false;
@@ -550,6 +587,11 @@ private:
     std::vector<int> beatSpaceColorClusters;
     std::vector<float> beatSpaceHotspotWeights;
     std::array<juce::Point<int>, MaxStrips> beatSpaceChannelPoints{};
+    std::array<int, BeatSpaceChannels> beatSpaceModAppliedOffsetX{};
+    std::array<int, BeatSpaceChannels> beatSpaceModAppliedOffsetY{};
+    int beatSpaceFavoritesModLastSlot = -1;
+    std::atomic<int> pendingFavoritesBeatSpaceJump{0};
+    std::atomic<int> pendingFavoritesBeatSpaceJumpSlot{-1};
     std::array<juce::Point<int>, BeatSpaceChannels> beatSpaceCategoryAnchors{};
     std::array<int, BeatSpaceChannels> beatSpaceCategoryRegionRadiusX{};
     std::array<int, BeatSpaceChannels> beatSpaceCategoryRegionRadiusY{};
@@ -567,6 +609,8 @@ private:
         bool used = false;
         juce::String name;
         std::array<float, BeatSpacePatchParamCount> patchValues{};
+        bool hasSavedBeatSpacePoint = false;
+        juce::Point<int> beatSpacePoint { BeatSpaceTableSize / 2, BeatSpaceTableSize / 2 };
     };
     std::array<std::array<MicrotonicStripPreset, MicrotonicStripPresetSlots>, BeatSpaceChannels> microtonicStripPresets{};
     std::array<bool, BeatSpaceChannels> beatSpaceCategoryPresetPointsReady{};
@@ -575,6 +619,12 @@ private:
     std::array<std::array<BeatSpaceBookmark, BeatSpaceBookmarkSlots>, BeatSpaceChannels> beatSpaceBookmarks{};
     std::array<BeatSpacePathState, BeatSpaceChannels> beatSpacePaths{};
     bool beatSpaceLinkedOffsetsReady = false;
+    std::array<float, BeatSpaceMacroKnobCount> beatSpaceMacroKnobValues{};
+    std::array<std::array<juce::Point<int>, BeatSpaceChannels>, 4> beatSpaceMacroTraitAnchors{};
+    bool beatSpaceMacroTraitAnchorsReady = false;
+    std::array<juce::Point<int>, BeatSpaceChannels> beatSpaceMacroBasePoints{};
+    bool beatSpaceMacroBasePointsValid = false;
+    bool beatSpaceApplyingMacroMove = false;
     std::array<int, BeatSpaceChannels> beatSpaceChannelCategoryAssignment { 0, 1, 2, 3, 4, 5 };
     std::array<int, BeatSpaceChannels> beatSpaceLastLoadedDisplayPresetIndex { -1, -1, -1, -1, -1, -1 };
     std::array<int, MaxStrips> beatSpaceLastAppliedTableIndex{};
@@ -588,8 +638,12 @@ private:
     bool beatSpaceMicrotonicExactMapping = false;
     bool beatSpacePersistentLayoutLoaded = false;
     std::atomic<int> pendingBeatSpaceStartupApply{0};
-    bool beatSpaceLinkAllChannels = false;
-    bool beatSpaceConfidenceOverlayEnabled = true;
+    std::atomic<int> pendingBeatSpaceStartupFinalize{0};
+    juce::int64 pendingBeatSpaceStartupFinalizeMs = 0;
+    int pendingBeatSpaceStartupFinalizeRemaining = 0;
+    bool beatSpaceLinkAllChannels = true;
+    bool beatSpaceCategoryConstrainEnabled = false;
+    bool beatSpaceConfidenceOverlayEnabled = false;
     bool beatSpacePathOverlayEnabled = true;
     BeatSpaceRandomizeMode beatSpaceRandomizeMode = BeatSpaceRandomizeMode::WithinCategory;
     juce::Image beatSpaceTablePreviewImage;
@@ -634,12 +688,14 @@ private:
     std::atomic<float>* masterVolumeParam = nullptr;
     std::atomic<float>* limiterThresholdParam = nullptr;
     std::atomic<float>* limiterEnabledParam = nullptr;
+    std::atomic<float>* quantizeParam = nullptr;
     std::atomic<float>* pitchSmoothingParam = nullptr;
     std::atomic<float>* outputRoutingParam = nullptr;
     std::atomic<float>* soundTouchEnabledParam = nullptr;
     std::atomic<float>* kitScaleEnabledParam = nullptr;
     std::atomic<float>* kitScaleModeParam = nullptr;
     std::atomic<float>* kitScaleRootParam = nullptr;
+    std::atomic<int> pendingKitScaleSettingsApply{0};
     std::array<std::atomic<float>*, MaxStrips> stripVolumeParams{};
     std::array<std::atomic<float>*, MaxStrips> stripPanParams{};
     std::array<std::atomic<float>*, MaxStrips> stripSpeedParams{};
@@ -767,6 +823,8 @@ private:
     void loadPersistentControlPages();
     void savePersistentControlPages() const;
     void loadPersistentGlobalControls();
+    void flushPersistentGlobalControlsSaveNowIfMessageThread();
+    void cancelPendingBeatSpaceStartupApply();
     bool loadDefaultHostedInstrumentIfNeeded(juce::String& error);
     void applyBeatSpaceDefaultChannelLayout();
     bool initializeBeatSpaceTable();
@@ -784,16 +842,24 @@ private:
         juce::String* errorOut);
     void clearHostedDirectParameterMap();
     void refreshHostedDirectParameterMapFromBeatSpace(bool likelyMicrotonic);
-    bool refreshBeatSpaceParameterMap();
+    bool refreshBeatSpaceParameterMap(bool refreshHostedDirectMap = true);
     void clampBeatSpaceView();
     int getBeatSpaceViewWidth() const;
     int getBeatSpaceViewHeight() const;
     juce::Point<int> clampBeatSpacePointToTable(const juce::Point<int>& point) const;
+    juce::Point<int> constrainBeatSpacePointToAssignedCategoryCluster(
+        int channel, const juce::Point<int>& point) const;
     juce::Point<int> gridCellToBeatSpacePoint(int gridX, int gridY, int gridWidth, int gridHeight) const;
     juce::Point<int> beatSpacePointToGridCell(const juce::Point<int>& point, int gridWidth, int gridHeight) const;
     juce::Point<int> constrainBeatSpacePointForChannel(int channel, const juce::Point<int>& point) const;
+    void forceBeatSpaceLinkRefreshIfEnabled();
     void rebuildBeatSpaceLinkedOffsetsFromCurrent(int masterChannel);
+    void reanchorBeatSpaceLinkedOffsets(int newAnchorChannel);
+    juce::Point<int> constrainBeatSpaceLinkedMasterPoint(const juce::Point<int>& masterPoint,
+                                                         int masterChannel) const;
     void applyBeatSpaceLinkedChannelOffsets(const juce::Point<int>& masterPoint, int masterChannel);
+    void rebuildBeatSpaceMacroTraitAnchors();
+    void applyBeatSpaceMacroBubbleOffsetsFromKnobs();
     void beginBeatSpaceMorphForChannel(int channel,
                                        const std::array<float, BeatSpaceVectorSize>& targetValues,
                                        const juce::Point<int>& targetPoint);
@@ -802,6 +868,9 @@ private:
     juce::Point<int> randomBeatSpacePointForChannel(int channel, BeatSpaceRandomizeMode mode) const;
     float getBeatSpacePointConfidence(const juce::Point<int>& point) const;
     void updateBeatSpacePathMorph(const juce::AudioPlayHead::PositionInfo& posInfo);
+    void applyBeatSpaceModTargetOffsets();
+    void applyFavoritesModTargetRecall();
+    void applyPendingFavoritesBeatSpaceJump();
     void updateBeatSpaceMorph();
     void normalizeBeatSpacePresetLayoutForSpace(int space);
     std::vector<int> getBeatSpaceVisiblePresetSlotsForSpace(int space) const;
@@ -842,6 +911,7 @@ private:
     bool saveSubPresetForMainPreset(int mainPresetIndex, int subPresetSlot);
     void ensureSubPresetsInitializedForMainPreset(int mainPresetIndex);
     void requestSubPresetRecallQuantized(int mainPresetIndex, int subPresetSlot, bool sequenceDriven);
+    double getSubPresetRecallIntervalBeats() const;
     void updateSubPresetQuantizedRecall(const juce::AudioPlayHead::PositionInfo& posInfo, int numSamples);
     void processPendingSubPresetApply();
     void appendBeatSpaceStateToPresetXml(juce::XmlElement& presetXml,
@@ -852,6 +922,8 @@ private:
                                          double hostPpqSnapshot,
                                          double hostTempoSnapshot,
                                          double nowMs);
+    void syncRuntimeStateFromParameters();
+    void requestImmediateUiAndMonomeRefresh();
 
     // Row 0, col 8: global momentary scratch modifier.
     bool momentaryScratchHoldActive = false;
@@ -859,9 +931,9 @@ private:
     std::array<EnhancedAudioStrip::DirectionMode, MaxStrips> momentaryScratchSavedDirection{};
     std::array<bool, MaxStrips> momentaryScratchWasStepMode{};
 
-    // Row 0, cols 9..15: PPQ stutter-hold with fixed divisions.
+    // Row 0, cols 9..14: PPQ stutter-hold with fixed divisions.
     bool momentaryStutterHoldActive = false;
-    double momentaryStutterDivisionBeats = 1.0; // one-button map spans 2.0 (1/2) ... 0.03125 (1/128)
+    double momentaryStutterDivisionBeats = 1.0; // one-button map spans 2.0 (1/2) ... 0.0625 (1/64)
     int momentaryStutterActiveDivisionButton = -1;
     std::atomic<uint8_t> momentaryStutterButtonMask{0};
     std::array<bool, MaxStrips> momentaryStutterStripArmed{};
@@ -911,6 +983,7 @@ private:
         int mainPresetIndex = 0;
         int subPresetSlot = 0;
         double targetPpq = 0.0;
+        double intervalBeats = 4.0;
     };
     int loadedPresetIndex = -1;
     int activeMainPresetIndex = 0;
@@ -935,6 +1008,9 @@ private:
     PendingSubPresetRecall pendingSubPresetRecall;
     std::atomic<int> pendingSubPresetApplyMainPreset{-1};
     std::atomic<int> pendingSubPresetApplySlot{-1};
+    std::atomic<double> pendingSubPresetApplyTargetPpq{-1.0};
+    std::atomic<double> pendingSubPresetApplyTargetTempo{120.0};
+    std::atomic<int64_t> pendingSubPresetApplyTargetSample{-1};
     std::atomic<int> pendingPresetLoadIndex{-1};
     uint32_t pendingPresetLoadQueuedAtMs = 0;
     juce::ThreadPool presetSaveThreadPool{1};
