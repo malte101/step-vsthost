@@ -49,8 +49,11 @@ public:
     {
         g.fillAll(juce::Colour(0xfff3f7fc));
 
-        const auto toolbar = getToolbarBounds();
-        drawToolbar(g, toolbar);
+        if (toolbarVisible)
+        {
+            const auto toolbar = getToolbarBounds();
+            drawToolbar(g, toolbar);
+        }
 
         const auto grid = getGridBounds();
         drawGrid(g, grid);
@@ -138,6 +141,19 @@ public:
         return activeTool;
     }
 
+    void setToolbarVisible(bool shouldBeVisible)
+    {
+        if (toolbarVisible == shouldBeVisible)
+            return;
+        toolbarVisible = shouldBeVisible;
+        repaint();
+    }
+
+    bool isToolbarVisible() const
+    {
+        return toolbarVisible;
+    }
+
     void setActiveTool(EditTool tool)
     {
         if (tool == EditTool::Draw)
@@ -190,7 +206,7 @@ public:
         if (shortcutDown && !event.mods.isRightButtonDown())
             return;
 
-        if (handleToolbarMouseDown(event.position))
+        if (toolbarVisible && handleToolbarMouseDown(event.position))
             return;
 
         const int stepIndex = getStepIndexFromPosition(event.position);
@@ -415,6 +431,7 @@ private:
     int currentStep = 0;
     bool isPlaying = false;
     float playbackPosition = -1.0f;
+    bool toolbarVisible = true;
     juce::Colour stripColor = juce::Colour(0xff6f93c8);
 
     EditTool activeTool = EditTool::Volume;
@@ -451,6 +468,8 @@ private:
 
     juce::Rectangle<float> getToolbarBounds() const
     {
+        if (!toolbarVisible)
+            return {};
         auto content = getContentBounds();
         return content.removeFromTop(kToolbarHeight);
     }
@@ -458,7 +477,8 @@ private:
     juce::Rectangle<float> getGridBounds() const
     {
         auto content = getContentBounds();
-        content.removeFromTop(kToolbarHeight + 1.0f);
+        if (toolbarVisible)
+            content.removeFromTop(kToolbarHeight + 1.0f);
         return content;
     }
 
@@ -725,7 +745,9 @@ private:
                     .withMultipliedBrightness(0.90f);
                 const float rampAlpha = 0.90f;
                 const auto profileLine = juce::Colour(0xfff7fbff).withAlpha(0.72f);
-                const auto clearedTopArea = juce::Colour(0xfff2f6fb).withAlpha(0.96f);
+                const auto clearedTopArea = suppressVelocityFillOverlay
+                    ? stepColor.withMultipliedBrightness(0.92f).withAlpha(0.86f)
+                    : juce::Colour(0xfff2f6fb).withAlpha(0.96f);
                 const auto velocityAreaRect = juce::Rectangle<float>(stepRect.getX() + 1.0f,
                                                                      barAreaTop,
                                                                      juce::jmax(1.0f, stepRect.getWidth() - 2.0f),
@@ -876,6 +898,9 @@ private:
 
     bool handleToolbarMouseDown(juce::Point<float> position)
     {
+        if (!toolbarVisible)
+            return false;
+
         if (!getToolbarBounds().contains(position))
             return false;
 

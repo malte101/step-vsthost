@@ -196,15 +196,31 @@ public:
     ModernAudioEngine* getAudioEngine() { return audioEngine.get(); }
     MonomeConnection& getMonomeConnection() { return monomeConnection; }
     HostedInstrumentRack& getHostRack() { return hostRack; }
+    float getHostedMixMeterLevel(int lane) const;
     bool loadHostedInstrument(const juce::File& file, juce::String& error);
     bool setLoadedHostedInstrumentAsDefault(juce::String& error);
     juce::File getLoadedHostedInstrumentFile() const;
     juce::File getDefaultHostedInstrumentFile() const;
+    juce::File getDefaultHostedInstrumentFile(int slot) const;
+    std::array<juce::File, 2> getDefaultHostedInstrumentFiles() const;
+    bool setDefaultHostedInstrumentFiles(const std::array<juce::File, 2>& files, juce::String& error);
+    bool loadHostedInstrumentFromDefaultSlot(int slot, juce::String& error);
+    HostedInstrumentRack* getMixInsertRack(int slot);
+    const HostedInstrumentRack* getMixInsertRack(int slot) const;
+    juce::AudioPluginInstance* getMixInsertInstance(int slot) const;
+    juce::File getLoadedMixInsertFile(int slot) const;
+    std::array<juce::File, 2> getDefaultMixInsertFiles() const;
+    bool setDefaultMixInsertFiles(const std::array<juce::File, 2>& files, juce::String& error);
+    bool loadMixInsertPlugin(int slot, const juce::File& file, juce::String& error);
+    bool loadMixInsertPluginFromDefaultSlot(int slot, juce::String& error);
+    bool unloadMixInsertPlugin(int slot);
     int getLaneMidiChannel(int stripIndex) const;
     int getLaneMidiNote(int stripIndex) const;
     void setLaneMidiChannel(int stripIndex, int channel);
     void setLaneMidiNote(int stripIndex, int note);
     void queueHostedProgramChangeForStrip(int stripIndex, int deltaPrograms);
+    static constexpr int HostedInstrumentDefaultSlots = 2;
+    static constexpr int MixInsertSlots = 2;
     
     bool loadSampleToStrip(int stripIndex, const juce::File& file);
     void loadAdjacentFile(int stripIndex, int direction);  // Browse files
@@ -315,6 +331,7 @@ public:
         bool colorClustersReady = false;
         bool linkAllChannels = false;
         bool categoryConstrainEnabled = false;
+        bool pathCategoryConstrainEnabled = false;
         bool confidenceOverlayEnabled = false;
         bool pathOverlayEnabled = true;
         int mappedChannels = 0;
@@ -407,6 +424,8 @@ public:
     bool isBeatSpacePathOverlayEnabled() const;
     void setBeatSpaceCategoryConstrainEnabled(bool enabled);
     bool isBeatSpaceCategoryConstrainEnabled() const;
+    void setBeatSpacePathCategoryConstrainEnabled(bool enabled);
+    bool isBeatSpacePathCategoryConstrainEnabled() const;
     void setBeatSpacePathRecordArmedChannel(int channel);
     int getBeatSpacePathRecordArmedChannel() const;
     bool beatSpaceAddBookmark(int channel, const juce::String& tag);
@@ -512,6 +531,7 @@ private:
     
     std::unique_ptr<ModernAudioEngine> audioEngine;
     HostedInstrumentRack hostRack;
+    std::array<HostedInstrumentRack, MixInsertSlots> mixInsertRacks;
     MonomeConnection monomeConnection;
     std::array<std::atomic<int>, MaxStrips> laneMidiChannel{};
     std::array<std::atomic<int>, MaxStrips> laneMidiNote{};
@@ -538,9 +558,13 @@ private:
     std::array<double, MaxStrips> hostedTraversalRatioAtLastTick{};
     std::array<double, MaxStrips> hostedTraversalPhaseOffsetTicks{};
     bool hostedDefaultAutoLoadAttempted = false;
+    bool mixInsertDefaultAutoLoadAttempted = false;
     mutable juce::CriticalSection hostedInstrumentFileLock;
+    mutable juce::CriticalSection mixInsertFileLock;
     juce::File loadedHostedInstrumentFile;
-    juce::File defaultHostedInstrumentFile;
+    std::array<juce::File, HostedInstrumentDefaultSlots> defaultHostedInstrumentFiles;
+    std::array<juce::File, MixInsertSlots> loadedMixInsertFiles;
+    std::array<juce::File, MixInsertSlots> defaultMixInsertFiles;
     static constexpr int BeatSpaceTableSize = 1000;
     static constexpr int BeatSpaceVectorSize = 73;
     static constexpr int BeatSpacePatchParamCount = 25;
@@ -624,7 +648,13 @@ private:
     bool beatSpaceMacroTraitAnchorsReady = false;
     std::array<juce::Point<int>, BeatSpaceChannels> beatSpaceMacroBasePoints{};
     bool beatSpaceMacroBasePointsValid = false;
+    std::array<int, BeatSpaceChannels> beatSpaceDensityMacroBaseStepCounts{};
+    std::array<std::array<bool, 64>, BeatSpaceChannels> beatSpaceDensityMacroBasePattern{};
+    std::array<std::array<float, 64>, BeatSpaceChannels> beatSpaceDensityMacroBaseStartVelocity{};
+    std::array<std::array<float, 64>, BeatSpaceChannels> beatSpaceDensityMacroBaseRepeatVelocity{};
+    bool beatSpaceDensityMacroBasePatternsValid = false;
     bool beatSpaceApplyingMacroMove = false;
+    bool beatSpaceApplyingPathMove = false;
     std::array<int, BeatSpaceChannels> beatSpaceChannelCategoryAssignment { 0, 1, 2, 3, 4, 5 };
     std::array<int, BeatSpaceChannels> beatSpaceLastLoadedDisplayPresetIndex { -1, -1, -1, -1, -1, -1 };
     std::array<int, MaxStrips> beatSpaceLastAppliedTableIndex{};
@@ -643,6 +673,7 @@ private:
     int pendingBeatSpaceStartupFinalizeRemaining = 0;
     bool beatSpaceLinkAllChannels = true;
     bool beatSpaceCategoryConstrainEnabled = false;
+    bool beatSpacePathCategoryConstrainEnabled = false;
     bool beatSpaceConfidenceOverlayEnabled = false;
     bool beatSpacePathOverlayEnabled = true;
     BeatSpaceRandomizeMode beatSpaceRandomizeMode = BeatSpaceRandomizeMode::WithinCategory;
@@ -704,6 +735,7 @@ private:
     std::array<std::atomic<float>*, MaxStrips> stripStepDecayParams{};
     std::array<std::atomic<float>*, MaxStrips> stripStepReleaseParams{};
     std::array<std::atomic<float>*, MaxStrips> stripSliceLengthParams{};
+    std::array<std::atomic<float>, BeatSpaceChannels> hostedMixMeterLevels{};
     juce::CriticalSection pendingLoopChangeLock;
     std::array<PendingLoopChange, MaxStrips> pendingLoopChanges{};
     juce::CriticalSection pendingBarChangeLock;
@@ -826,6 +858,7 @@ private:
     void flushPersistentGlobalControlsSaveNowIfMessageThread();
     void cancelPendingBeatSpaceStartupApply();
     bool loadDefaultHostedInstrumentIfNeeded(juce::String& error);
+    bool loadDefaultMixInsertPluginsIfNeeded(juce::String& error);
     void applyBeatSpaceDefaultChannelLayout();
     bool initializeBeatSpaceTable();
     void rebuildBeatSpaceTablePreviewImage();
@@ -860,6 +893,8 @@ private:
     void applyBeatSpaceLinkedChannelOffsets(const juce::Point<int>& masterPoint, int masterChannel);
     void rebuildBeatSpaceMacroTraitAnchors();
     void applyBeatSpaceMacroBubbleOffsetsFromKnobs();
+    void captureBeatSpaceDensityMacroBasePatterns();
+    void applyBeatSpaceDensityMacroToPatterns(float densityMacro);
     void beginBeatSpaceMorphForChannel(int channel,
                                        const std::array<float, BeatSpaceVectorSize>& targetValues,
                                        const juce::Point<int>& targetPoint);

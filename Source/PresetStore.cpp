@@ -1,6 +1,7 @@
 #include "PresetStore.h"
 #include "AudioEngine.h"
 #include "PlayheadSpeedQuantizer.h"
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -23,6 +24,18 @@ constexpr size_t kMaxEmbeddedWavBytes = 48 * 1024 * 1024;
 constexpr int64_t kMaxPresetXmlBytes = 128LL * 1024LL * 1024LL;
 constexpr int64_t kMaxPresetNameXmlBytes = 8LL * 1024LL * 1024LL;
 constexpr int kMaxStoredSamplePathChars = 4096;
+constexpr std::array<const char*, 10> kGlobalParameterIds {
+    "masterVolume",
+    "limiterThreshold",
+    "limiterEnabled",
+    "quantize",
+    "pitchSmoothing",
+    "outputRouting",
+    "soundTouchEnabled",
+    "kitScaleEnabled",
+    "kitScaleMode",
+    "kitScaleRoot"
+};
 
 struct GlobalParameterSnapshot
 {
@@ -540,6 +553,7 @@ bool savePreset(int presetIndex,
 {
     if (presetIndex < 0 || presetIndex >= kMaxPresetSlots || audioEngine == nullptr || currentStripFiles == nullptr)
         return false;
+    const bool isSubPresetSlot = (presetIndex >= kVisiblePresetSlots);
 
     try
     {
@@ -571,7 +585,7 @@ bool savePreset(int presetIndex,
         auto* stripXml = preset.createNewChildElement("Strip");
         stripXml->setAttribute("index", i);
 
-        if (strip->hasAudio())
+        if (!isSubPresetSlot && strip->hasAudio())
         {
             const juce::String storedPath = currentStripFiles[i].getFullPathName().trim();
             if (isValidStoredSamplePath(storedPath))
@@ -746,15 +760,25 @@ bool savePreset(int presetIndex,
         }
     }
 
-    if (auto stateXml = parameters.copyState().createXml())
+    auto parameterState = parameters.copyState();
+    if (isSubPresetSlot)
+    {
+        for (const auto* globalParamId : kGlobalParameterIds)
+            parameterState.removeProperty(globalParamId, nullptr);
+    }
+
+    if (auto stateXml = parameterState.createXml())
     {
         stateXml->setTagName("ParametersState");
         preset.addChildElement(stateXml.release());
     }
 
-    auto* globalsXml = preset.createNewChildElement("Globals");
-    if (auto* masterVol = parameters.getRawParameterValue("masterVolume"))
-        globalsXml->setAttribute("masterVolume", *masterVol);
+    if (!isSubPresetSlot)
+    {
+        auto* globalsXml = preset.createNewChildElement("Globals");
+        if (auto* masterVol = parameters.getRawParameterValue("masterVolume"))
+            globalsXml->setAttribute("masterVolume", *masterVol);
+    }
     if (onBeforeWrite)
         onBeforeWrite(preset);
 
@@ -793,6 +817,7 @@ bool loadPreset(int presetIndex,
 {
     if (presetIndex < 0 || presetIndex >= kMaxPresetSlots || audioEngine == nullptr)
         return false;
+    const bool isSubPresetSlot = (presetIndex >= kVisiblePresetSlots);
 
     try
     {
@@ -907,25 +932,30 @@ bool loadPreset(int presetIndex,
             continue;
 
         const juce::String samplePath = stripXml->getStringAttribute("samplePath").trim();
-        bool loadedStripAudio = false;
-        if (samplePath.isNotEmpty() && isValidStoredSamplePath(samplePath))
+        const bool preserveCurrentStripAudio = preservePlaybackState || isSubPresetSlot;
+        bool loadedStripAudio = strip->hasAudio();
+        if (!preserveCurrentStripAudio)
         {
-            juce::File sampleFile(samplePath);
-            if (sampleFile.existsAsFile())
+            loadedStripAudio = false;
+            if (samplePath.isNotEmpty() && isValidStoredSamplePath(samplePath))
             {
-                loadedStripAudio = loadSampleToStrip(stripIndex, sampleFile);
+                juce::File sampleFile(samplePath);
+                if (sampleFile.existsAsFile())
+                {
+                    loadedStripAudio = loadSampleToStrip(stripIndex, sampleFile);
+                }
             }
-        }
 
-        if (!loadedStripAudio)
-        {
-            const juce::String embeddedSample = stripXml->getStringAttribute(kEmbeddedSampleAttr);
-            if (embeddedSample.isNotEmpty())
-                loadedStripAudio = decodeWavBase64ToStrip(embeddedSample, *strip);
-        }
+            if (!loadedStripAudio)
+            {
+                const juce::String embeddedSample = stripXml->getStringAttribute(kEmbeddedSampleAttr);
+                if (embeddedSample.isNotEmpty())
+                    loadedStripAudio = decodeWavBase64ToStrip(embeddedSample, *strip);
+            }
 
-        if (!loadedStripAudio)
-            strip->clearSample();
+            if (!loadedStripAudio)
+                strip->clearSample();
+        }
 
         auto finiteFloat = [](double value, float fallback)
         {
@@ -1219,6 +1249,48 @@ bool loadPreset(int presetIndex,
                 pitchParam->setValueNotifyingHost(
                     juce::jlimit(0.0f, 1.0f, ranged->convertTo0to1(pitchValue)));
                 }
+        }
+
+        if (auto* stepAttackParam = parameters.getParameter("stripStepAttack" + juce::String(stripIndex)))
+        {
+            const float attackValue = clampedFloat(
+                stripXml->getDoubleAttribute("stepAttackMs", 0.0),
+                0.0f,
+                0.0f,
+                400.0f);
+            if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(stepAttackParam))
+            {
+                stepAttackParam->setValueNotifyingHost(
+                    juce::jlimit(0.0f, 1.0f, ranged->convertTo0to1(attackValue)));
+            }
+        }
+
+        if (auto* stepDecayParam = parameters.getParameter("stripStepDecay" + juce::String(stripIndex)))
+        {
+            const float decayValue = clampedFloat(
+                stripXml->getDoubleAttribute("stepDecayMs", 4000.0),
+                4000.0f,
+                1.0f,
+                4000.0f);
+            if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(stepDecayParam))
+            {
+                stepDecayParam->setValueNotifyingHost(
+                    juce::jlimit(0.0f, 1.0f, ranged->convertTo0to1(decayValue)));
+            }
+        }
+
+        if (auto* stepReleaseParam = parameters.getParameter("stripStepRelease" + juce::String(stripIndex)))
+        {
+            const float releaseValue = clampedFloat(
+                stripXml->getDoubleAttribute("stepReleaseMs", 110.0),
+                110.0f,
+                1.0f,
+                4000.0f);
+            if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(stepReleaseParam))
+            {
+                stepReleaseParam->setValueNotifyingHost(
+                    juce::jlimit(0.0f, 1.0f, ranged->convertTo0to1(releaseValue)));
+            }
         }
 
         if (auto* sliceLengthParam = parameters.getParameter("stripSliceLength" + juce::String(stripIndex)))

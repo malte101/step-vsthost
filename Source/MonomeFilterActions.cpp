@@ -100,9 +100,9 @@ void renderRow(const EnhancedAudioStrip& strip, int y, int newLedState[16][16], 
             if (x == currentColumn)
                 newLedState[x][y] = 15;
             else if (x < currentColumn)
-                newLedState[x][y] = 4;
+                newLedState[x][y] = 11;
             else
-                newLedState[x][y] = 1;
+                newLedState[x][y] = 0;
         }
     }
     else if (subPage == 1)
@@ -121,9 +121,9 @@ void renderRow(const EnhancedAudioStrip& strip, int y, int newLedState[16][16], 
             if (x == currentColumn)
                 newLedState[x][y] = 15;
             else if (x < currentColumn)
-                newLedState[x][y] = 8;
+                newLedState[x][y] = 11;
             else
-                newLedState[x][y] = 1;
+                newLedState[x][y] = 0;
         }
     }
     else if (subPage == 2)

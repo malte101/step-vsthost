@@ -457,7 +457,7 @@ public:
     // Step sequencer control
     void startStepSequencer();  // Start step sequencer playback (auto-runs with clock)
     void retriggerStepVoice();  // Retrigger currently active step voice without editing gates
-    void retriggerStepVoiceAtColumn(int column); // Retrigger and lock visible step playhead to a given grid column
+    void retriggerStepVoiceAtColumn(int column, bool forceColumn = false); // Retrigger and lock visible step playhead to a given grid column
     void setStepPatternLengthSteps(int steps);
     int getStepPatternLengthSteps() const { return juce::jlimit(2, 64, stepPatternLengthSteps.load(std::memory_order_acquire)); }
     void setStepPatternBars(int bars);
@@ -518,10 +518,8 @@ public:
     bool isMuted() const { return muted.load(std::memory_order_acquire) != 0; }
     void setSolo(bool shouldSolo) { solo.store(shouldSolo ? 1 : 0, std::memory_order_release); }
     bool isSolo() const { return solo.load(std::memory_order_acquire) != 0; }
-    void setPlayheadSpeedRatio(float ratio)
-    {
-        playheadSpeedRatio.store(juce::jlimit(0.125f, 8.0f, ratio), std::memory_order_release);
-    }
+    void setPlayheadSpeedRatio(float ratio);
+    void requestPlayheadUnityPhaseResync();
     float getPlayheadSpeedRatio() const { return playheadSpeedRatio.load(std::memory_order_acquire); }
     void setPlaybackSpeed(float speed);
     void setPlaybackSpeedImmediate(float speed);
@@ -653,6 +651,11 @@ public:
     {
         return static_cast<FilterAlgorithm>(juce::jlimit(0, 5, filterAlgorithm.load(std::memory_order_acquire)));
     }
+    void processExternalFilterChannels(juce::AudioBuffer<float>& buffer,
+                                       int leftChannel,
+                                       int rightChannel,
+                                       int startSample,
+                                       int numSamples);
     void setSwingAmount(float amount) { swingAmount = juce::jlimit(0.0f, 1.0f, amount); }
     float getSwingAmount() const { return swingAmount.load(std::memory_order_acquire); }
     void setSwingDivision(SwingDivision division) { swingDivision.store(static_cast<int>(division), std::memory_order_release); }
@@ -667,7 +670,7 @@ public:
     float getGateShape() const { return gateShape.load(std::memory_order_acquire); }
     void setLoopCrossfadeLengthMs(float ms) { loopCrossfadeLengthMs.store(juce::jlimit(1.0f, 50.0f, ms), std::memory_order_release); }
     
-    // Play mode setters/getters
+    // Play mode setter/getter (Step-only compatibility API).
     void setPlayMode(PlayMode /*mode*/)
     {
         playMode = PlayMode::Step;
@@ -865,6 +868,7 @@ private:
     int64_t lastObservedGlobalSample = 0;
     double lastObservedTempo = 120.0;
     bool speedPpqBypassActive = false;
+    std::atomic<int> pendingUnityPhaseResync{0};
     std::atomic<int> momentaryStutterTimingActive{0};
     std::atomic<double> momentaryStutterDivisionForFadeBeats{0.5};
     std::atomic<float> momentaryStutterRetriggerFadeMs{0.7f};
@@ -904,7 +908,7 @@ private:
     double reverseScratchBeatsForLoop = 4.0;
     double reverseScratchLoopStartSamples = 0.0;
     double reverseScratchLoopLengthSamples = 1.0;
-    bool reverseScratchUseRateBlend = false; // Loop mode: blend reverse rate from current->restore speed
+    bool reverseScratchUseRateBlend = false; // Use rate-ramp blend when reversing back to timeline.
     double reverseScratchStartRate = 0.0;
     double reverseScratchEndRate = 1.0;
 
@@ -1136,6 +1140,9 @@ public:
         GrainEmitter,
         GrainEnvelope,
         Retrigger,
+        BeatSpaceX,
+        BeatSpaceY,
+        Favorites,
         FilterFrequency = Cutoff
     };
 
@@ -1262,6 +1269,9 @@ public:
     bool isModPitchScaleQuantize(int stripIndex) const;
     void setModPitchScale(int stripIndex, PitchScale scale);
     PitchScale getModPitchScale(int stripIndex) const;
+    float getBeatSpaceModXSigned(int stripIndex) const;
+    float getBeatSpaceModYSigned(int stripIndex) const;
+    float getFavoritesModNorm(int stripIndex) const;
     static float quantizeSemitonesToScale(float semitoneValue, PitchScale scale, int rootSemitone = 0);
     void setGlobalPitchScaleQuantizeEnabled(bool enabled);
     bool isGlobalPitchScaleQuantizeEnabled() const;
@@ -1353,6 +1363,9 @@ private:
     std::array<std::unique_ptr<PatternRecorder>, 4> patterns;
     std::array<std::array<ModSequencer, NumModSequencers>, MaxStrips> modSequencers;
     std::array<std::atomic<int>, MaxStrips> activeModSequencerSlots{};
+    std::array<std::atomic<float>, MaxStrips> modBeatSpaceXSigned{};
+    std::array<std::atomic<float>, MaxStrips> modBeatSpaceYSigned{};
+    std::array<std::atomic<float>, MaxStrips> modFavoritesNorm{};
     std::atomic<int> momentaryStutterActive{0};
     std::atomic<double> momentaryStutterDivisionBeats{0.5}; // quarter-note units
     std::atomic<double> momentaryStutterStartPpq{0.0};

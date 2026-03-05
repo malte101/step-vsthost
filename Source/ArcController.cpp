@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "PlayheadSpeedQuantizer.h"
 #include <array>
 #include <cmath>
 
@@ -50,6 +51,13 @@ std::array<int, 64> makeAbsoluteRing(float normalized)
     }
     ring[static_cast<size_t>(marker)] = 15;
     return ring;
+}
+
+float speedRingNormalized(float speedRatio)
+{
+    const float quantized = PlayheadSpeedQuantizer::quantizeRatio(speedRatio);
+    const int column = PlayheadSpeedQuantizer::nearestSpeedIndex(quantized);
+    return static_cast<float>(juce::jlimit(0, 15, column)) / 15.0f;
 }
 
 std::array<int, 64> makeBipolarRing(float bipolarValue)
@@ -287,10 +295,19 @@ void StepVstHostAudioProcessor::handleMonomeArcDelta(int encoder, int delta)
                 }
                 else
                 {
-                    const float speedStep = fineAdjust ? 0.01f : 0.04f;
-                    const float next = juce::jlimit(0.0f, 4.0f, strip->getPlaybackSpeed() + (static_cast<float>(delta) * speedStep));
-                    strip->setPlaybackSpeed(next);
-                    notifyStripParam("stripSpeed", next);
+                    const float currentRatio = PlayheadSpeedQuantizer::quantizeRatio(strip->getPlayheadSpeedRatio());
+                    const int currentColumn = PlayheadSpeedQuantizer::nearestSpeedIndex(currentRatio);
+                    int columnDelta = delta;
+                    if (fineAdjust)
+                    {
+                        columnDelta /= 2;
+                        if (columnDelta == 0)
+                            columnDelta = (delta > 0) ? 1 : -1;
+                    }
+                    const int nextColumn = juce::jlimit(0, 15, currentColumn + columnDelta);
+                    const float nextRatio = PlayheadSpeedQuantizer::ratioFromColumn(nextColumn);
+                    strip->setPlayheadSpeedRatio(nextRatio);
+                    notifyStripParam("stripSpeed", nextRatio);
                 }
                 break;
             }
@@ -443,7 +460,7 @@ void StepVstHostAudioProcessor::updateMonomeArcRings()
         else
         {
             if (ringCount >= 1)
-                sendRingIfChanged(0, makeAbsoluteRing(hasStrip ? (strip->getPlaybackSpeed() / 4.0f) : 0.0f));
+                sendRingIfChanged(0, makeAbsoluteRing(hasStrip ? speedRingNormalized(strip->getPlayheadSpeedRatio()) : 0.0f));
             if (ringCount >= 2)
                 sendRingIfChanged(1, makeBipolarRing(hasStrip ? (strip->getPitchShift() / 24.0f) : 0.0f));
             if (ringCount >= 3)

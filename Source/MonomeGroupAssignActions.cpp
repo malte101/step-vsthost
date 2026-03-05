@@ -5,21 +5,11 @@ namespace MonomeGroupAssignActions
 {
 bool handleButtonPress(ModernAudioEngine& audioEngine, int stripIndex, int x)
 {
-    if (x >= 0 && x <= 4)
-    {
-        if (x == 0)
-            audioEngine.assignStripToGroup(stripIndex, -1);
-        else
-            audioEngine.assignStripToGroup(stripIndex, x - 1);
-
-        return true;
-    }
-
     auto* strip = audioEngine.getStrip(stripIndex);
     if (!strip)
         return false;
 
-    // Middle section: playback direction mode selection.
+    // Mode page: playback direction mode selection only.
     // 6=Normal, 7=Reverse, 8=PingPong, 9=Random, 10=RandomWalk, 11=RandomSlice
     if (x >= 6 && x <= 11)
     {
@@ -37,31 +27,13 @@ bool handleButtonPress(ModernAudioEngine& audioEngine, int stripIndex, int x)
         return true;
     }
 
-    // Right section: step mode indicator/lock.
-    if (x >= 13 && x <= 15)
-    {
-        if (x == 14)
-            strip->setPlayMode(EnhancedAudioStrip::PlayMode::Step);
-        return true;
-    }
-
     return false;
 }
 
 void renderRow(const EnhancedAudioStrip& strip, int y, int newLedState[16][16])
 {
-    int currentGroup = strip.getGroup();
-
-    newLedState[0][y] = (currentGroup == -1) ? 15 : 4;
-
-    for (int g = 0; g < 4; ++g)
-    {
-        int buttonX = g + 1;
-        newLedState[buttonX][y] = (currentGroup == g) ? 15 : 4;
-    }
-
-    newLedState[5][y] = 0;   // section spacer between group and direction modes
-    newLedState[12][y] = 0;  // section spacer between direction and strip-type modes
+    for (int x = 0; x < 16; ++x)
+        newLedState[x][y] = 0;
 
     const auto directionMode = strip.getDirectionMode();
     newLedState[6][y] = (directionMode == EnhancedAudioStrip::DirectionMode::Normal) ? 15 : 4;
@@ -70,9 +42,5 @@ void renderRow(const EnhancedAudioStrip& strip, int y, int newLedState[16][16])
     newLedState[9][y] = (directionMode == EnhancedAudioStrip::DirectionMode::Random) ? 15 : 4;
     newLedState[10][y] = (directionMode == EnhancedAudioStrip::DirectionMode::RandomWalk) ? 15 : 4;
     newLedState[11][y] = (directionMode == EnhancedAudioStrip::DirectionMode::RandomSlice) ? 15 : 4;
-
-    newLedState[13][y] = 0;
-    newLedState[14][y] = 15;
-    newLedState[15][y] = 0;
 }
 } // namespace MonomeGroupAssignActions

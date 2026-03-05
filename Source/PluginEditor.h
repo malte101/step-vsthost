@@ -95,6 +95,7 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
     void timerCallback() override;
+    void visibilityChanged() override;
     void updateFromEngine();
     
 private:
@@ -130,15 +131,22 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
     void timerCallback() override;
+    void visibilityChanged() override;
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseDoubleClick(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;
     void mouseUp(const juce::MouseEvent& e) override;
+    void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override;
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
     void filesDropped(const juce::StringArray& files, int x, int y) override;
     
     void updateFromEngine();
     void setModulationLaneView(bool shouldShow);
+    void setStepPatchTabIndex(int tabIndex);
+    int getStepPatchTabIndex() const noexcept;
+    void setStepToolbarVisible(bool shouldShow);
+    void setStepEditTool(StepSequencerDisplay::EditTool tool);
+    StepSequencerDisplay::EditTool getStepEditTool() const;
     
     class ColoredKnobLookAndFeel : public juce::LookAndFeel_V4
     {
@@ -192,6 +200,86 @@ public:
                 g.setColour(ringColour.withAlpha(0.95f));
                 g.strokePath(bipolarArc, juce::PathStrokeType(1.8f));
             }
+
+            // Offset indicator ring (BeatSpace offset view): always draw the ring,
+            // then highlight neutral->value arc when an offset is active.
+            const bool offsetActive = static_cast<bool>(props.getWithDefault("offsetActive", false));
+            const float neutralNorm = juce::jlimit(
+                0.0f, 1.0f,
+                static_cast<float>(props.getWithDefault("offsetNeutralNorm", 0.5)));
+            const float valueNorm = juce::jlimit(
+                0.0f, 1.0f,
+                static_cast<float>(props.getWithDefault("offsetValueNorm", sliderPos)));
+            const auto offsetColour = juce::Colour(static_cast<juce::uint32>(
+                static_cast<int>(props.getWithDefault("offsetColour", static_cast<int>(0xfff08a24)))));
+            const auto defaultOffsetBase = knobColor
+                .interpolatedWith(juce::Colours::white, 0.18f)
+                .withMultipliedSaturation(0.68f)
+                .withMultipliedBrightness(0.84f);
+            const auto offsetBaseColour = juce::Colour(static_cast<juce::uint32>(
+                static_cast<int>(props.getWithDefault("offsetBaseColour", static_cast<int>(defaultOffsetBase.getARGB())))));
+            const bool transparentOffsetBackground = static_cast<bool>(
+                props.getWithDefault("offsetTransparentBackground", true));
+
+            const float neutralA = rotaryStartAngle + (neutralNorm * (rotaryEndAngle - rotaryStartAngle));
+            const float valueA = rotaryStartAngle + (valueNorm * (rotaryEndAngle - rotaryStartAngle));
+
+            juce::Path offsetTrack;
+            offsetTrack.addArc(rx - 2.6f, ry - 2.6f, rw + 5.2f, rw + 5.2f,
+                               rotaryStartAngle - juce::MathConstants<float>::halfPi,
+                               rotaryEndAngle - juce::MathConstants<float>::halfPi,
+                               true);
+            if (!transparentOffsetBackground)
+            {
+                g.setColour(juce::Colour(0xff0d2334).withAlpha(0.78f));
+                g.strokePath(offsetTrack, juce::PathStrokeType(4.2f));
+            }
+            g.setColour(offsetBaseColour.withAlpha(0.70f));
+            g.strokePath(offsetTrack, juce::PathStrokeType(2.9f));
+
+            if (offsetActive && (std::abs(valueNorm - neutralNorm) > 1.0e-4f))
+            {
+                const float startNorm = juce::jmin(neutralNorm, valueNorm);
+                const float endNorm = juce::jmax(neutralNorm, valueNorm);
+                const float startA = rotaryStartAngle + (startNorm * (rotaryEndAngle - rotaryStartAngle));
+                const float endA = rotaryStartAngle + (endNorm * (rotaryEndAngle - rotaryStartAngle));
+
+                juce::Path offsetArc;
+                offsetArc.addArc(rx - 2.6f, ry - 2.6f, rw + 5.2f, rw + 5.2f,
+                                 startA - juce::MathConstants<float>::halfPi,
+                                 endA - juce::MathConstants<float>::halfPi,
+                                 true);
+                if (!transparentOffsetBackground)
+                {
+                    g.setColour(juce::Colour(0xff081521).withAlpha(0.88f));
+                    g.strokePath(offsetArc, juce::PathStrokeType(4.6f));
+                }
+                g.setColour(offsetColour.withAlpha(0.99f));
+                g.strokePath(offsetArc, juce::PathStrokeType(3.3f));
+            }
+
+            const float neutralInner = radius + 0.4f;
+            const float neutralOuter = radius + 2.2f;
+            const float nx1 = centreX + (std::cos(neutralA - juce::MathConstants<float>::halfPi) * neutralInner);
+            const float ny1 = centreY + (std::sin(neutralA - juce::MathConstants<float>::halfPi) * neutralInner);
+            const float nx2 = centreX + (std::cos(neutralA - juce::MathConstants<float>::halfPi) * neutralOuter);
+            const float ny2 = centreY + (std::sin(neutralA - juce::MathConstants<float>::halfPi) * neutralOuter);
+            g.setColour(juce::Colour(0xfff1f7ff).withAlpha(0.95f));
+            g.drawLine(nx1, ny1, nx2, ny2, 1.4f);
+
+            const float offsetMarkerRadius = radius + 1.85f;
+            const float offsetMarkerX = centreX + (std::cos(valueA - juce::MathConstants<float>::halfPi) * offsetMarkerRadius);
+            const float offsetMarkerY = centreY + (std::sin(valueA - juce::MathConstants<float>::halfPi) * offsetMarkerRadius);
+            const auto markerOutlineColour = offsetBaseColour
+                .interpolatedWith(knobColor, 0.34f)
+                .darker(0.12f);
+            g.setColour(markerOutlineColour.withAlpha(offsetActive ? 0.92f : 0.84f));
+            g.fillEllipse(offsetMarkerX - 2.8f, offsetMarkerY - 2.8f, 5.6f, 5.6f);
+            const auto markerColour = offsetActive
+                ? offsetColour.brighter(0.50f)
+                : offsetBaseColour.brighter(0.36f);
+            g.setColour(markerColour.withAlpha(offsetActive ? 0.98f : 0.90f));
+            g.fillEllipse(offsetMarkerX - 1.75f, offsetMarkerY - 1.75f, 3.5f, 3.5f);
 
             // Modulation indicator (synth-style): bipolar range around current knob position.
             const bool modActive = static_cast<bool>(props.getWithDefault("modActive", false));
@@ -453,6 +541,29 @@ private:
     juce::Slider stepAttackSlider;  // Step mode attack (ms)
     juce::Slider stepDecaySlider;   // Step mode decay (ms)
     juce::Slider stepReleaseSlider; // Step mode release (ms)
+    enum class StepPatchTab
+    {
+        Mix = 0,
+        Shape,
+        Osc,
+        Noise
+    };
+    StepPatchTab stepPatchTab = StepPatchTab::Mix;
+    std::array<juce::TextButton, 4> stepPatchTabButtons;
+    static constexpr int OscPatchControlCount = 9;
+    static constexpr int NoisePatchControlCount = 8;
+    static constexpr int OutPatchControlCount = 4;
+    std::array<juce::Slider, OscPatchControlCount> oscPatchSliders;
+    std::array<juce::Label, OscPatchControlCount> oscPatchLabels;
+    std::array<juce::Slider, NoisePatchControlCount> noisePatchSliders;
+    std::array<juce::Label, NoisePatchControlCount> noisePatchLabels;
+    std::array<juce::Slider, OutPatchControlCount> outPatchSliders;
+    std::array<juce::Label, OutPatchControlCount> outPatchLabels;
+    int oscPatchScrollRow = 0;
+    int noisePatchScrollRow = 0;
+    float oscPatchWheelAccum = 0.0f;
+    float noisePatchWheelAccum = 0.0f;
+    juce::Rectangle<int> stepPatchWheelBounds;
     juce::Label tempoLabel;         // Shows current beats setting
     juce::Label volumeLabel;        // Label below knob
     juce::Label panLabel;           // Label below knob
@@ -540,6 +651,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> stepDecayAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> stepReleaseAttachment;
     bool suppressBeatSpaceCategoryAction = false;
+    bool beatSpaceBubbleSelected = false;
     
     void setupComponents();
     void rebuildBeatSpaceCategoryMenu();
@@ -558,6 +670,7 @@ private:
     void hideAllGrainControls();
     void updateGrainOverlayVisibility();
     void updateGrainTabButtons();
+    void updateStepPatchTabButtons();
     void updateModSequencerTabButtons();
 
     enum class ModTransformMode
@@ -608,6 +721,7 @@ public:
     void mouseUp(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;
     void timerCallback() override;
+    void visibilityChanged() override;
     
     void updateFromEngine();
     void sendGridStateToMonome();  // Send LED state to actual hardware
@@ -702,10 +816,10 @@ private:
     juce::Slider masterVolumeSlider;
     juce::Label masterVolumeLabel;
     juce::ToggleButton limiterToggle;
+    juce::ComboBox quantizeSelector;
+    juce::Label quantizeLabel;
     juce::ComboBox swingDivisionBox;
     juce::Label swingDivisionLabel;
-    juce::ComboBox outputRoutingBox;
-    juce::Label outputRoutingLabel;
     juce::ToggleButton kitScaleToggle;
     juce::ComboBox kitScaleRootBox;
     juce::Label kitScaleRootLabel;
@@ -730,7 +844,7 @@ private:
     
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> masterVolumeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> limiterEnabledAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> outputRoutingAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> quantizeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> kitScaleEnabledAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> kitScaleRootAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> kitScaleModeAttachment;
@@ -765,34 +879,163 @@ public:
     void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
     void resized() override;
     void refreshFromProcessor();
+    int getPreferredTopSectionHeight(int availableHeight) const;
 
 private:
+    enum class ViewSizeMode
+    {
+        Compact = 0,
+        Standard,
+        Focus
+    };
+
     StepVstHostAudioProcessor& processor;
     juce::Label titleLabel;
+    juce::Label beatSpaceViewModeLabel;
+    juce::ComboBox beatSpaceViewModeBox;
     juce::Label beatSpaceMorphLabel;
     juce::Slider beatSpaceMorphSlider;
     juce::Label microtonicPresetStripLabel;
     juce::ComboBox microtonicPresetStripBox;
     juce::Label microtonicPresetListLabel;
     juce::ComboBox microtonicPresetListBox;
+    juce::Label beatPatternListLabel;
+    juce::ComboBox beatPatternListBox;
+    std::vector<StepVstHostAudioProcessor::SiteDrumPatternPresetInfo> beatPatternPresetInfos;
+    std::vector<int> beatPatternComboToPresetIndex;
+    juce::TextButton beatPatternStoreButton;
+    juce::TextButton beatPatternDeleteButton;
     juce::TextButton microtonicPresetStoreButton;
     juce::TextButton microtonicPresetRecallButton;
     juce::TextButton microtonicPresetDeleteButton;
     juce::Label microtonicPresetStatusLabel;
     juce::TextButton beatSpaceLinkButton;
+    juce::Label beatSpacePathPlayModeLabel;
+    juce::ComboBox beatSpacePathPlayModeBox;
     std::array<juce::TextButton, StepVstHostAudioProcessor::BeatSpaceChannels> beatSpacePathButtons;
     juce::Label beatSpacePreviewLabel;
     juce::Rectangle<int> beatSpacePreviewBounds;
     int beatSpaceDragChannel = -1;
     bool beatSpaceDragSingleChannel = false;
-    bool beatSpaceTextOverlayEnabled = true;
+    bool beatSpaceDragLinkHandle = false;
+    int beatSpaceDragLinkAnchorChannel = -1;
+    juce::Point<int> beatSpaceDragLinkAnchorStartPoint { 0, 0 };
+    juce::Point<int> beatSpaceDragLinkStartPoint { 0, 0 };
+    juce::Point<int> beatSpaceLinkHandlePoint { 500, 500 };
+    bool beatSpaceLinkHandlePointValid = false;
+    bool beatSpaceLastLinkEnabled = false;
+    bool beatSpaceTextOverlayEnabled = false;
+    bool beatSpaceBubbleCoordinateOverlayEnabled = true;
     bool beatSpacePathRecordingActive = false;
     int beatSpacePathRecordingChannel = -1;
+    bool beatSpaceShiftPanActive = false;
+    juce::Point<int> beatSpaceShiftPanLastMouse { 0, 0 };
+    float beatSpaceShiftPanAccumX = 0.0f;
+    float beatSpaceShiftPanAccumY = 0.0f;
     float beatSpaceWheelZoomAccumulator = 0.0f;
+    float beatSpaceWheelPanAccumulatorX = 0.0f;
+    float beatSpaceWheelPanAccumulatorY = 0.0f;
     bool beatSpaceUiReady = false;
+    ViewSizeMode beatSpaceViewSizeMode = ViewSizeMode::Compact;
+    juce::String lastMicrotonicPresetListSignature;
+    juce::String lastBeatPatternListSignature;
+    juce::String buildMicrotonicPresetListSignature() const;
+    juce::String buildBeatPatternListSignature() const;
+    void rebuildBeatPatternList();
     void rebuildMicrotonicPresetList();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BeatSpaceControlPanel)
+};
+
+//==============================================================================
+/**
+ * MacroControlPanel - Global BeatSpace macro controls
+ */
+class MacroControlPanel : public juce::Component
+{
+public:
+    MacroControlPanel(StepVstHostAudioProcessor& p);
+
+    void paint(juce::Graphics& g) override;
+    void resized() override;
+    void refreshFromProcessor();
+    int getPreferredTopSectionHeight(int availableHeight) const;
+
+private:
+    StepVstHostAudioProcessor& processor;
+    juce::Label titleLabel;
+    std::array<juce::Slider, StepVstHostAudioProcessor::BeatSpaceMacroKnobCount> macroKnobs;
+    std::array<juce::Label, StepVstHostAudioProcessor::BeatSpaceMacroKnobCount> macroLabels;
+    juce::TextButton resetButton;
+    bool macroUiReady = false;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MacroControlPanel)
+};
+
+//==============================================================================
+/**
+ * MixControlPanel - Hosted multi-out lane mixer (mirrors strip volume/pan)
+ */
+class MixControlPanel : public juce::Component,
+                        public juce::Timer
+{
+public:
+    MixControlPanel(StepVstHostAudioProcessor& p);
+    ~MixControlPanel() override;
+
+    void paint(juce::Graphics& g) override;
+    void resized() override;
+    void timerCallback() override;
+    void refreshFromProcessor();
+    int getPreferredTopSectionHeight(int availableHeight) const;
+
+private:
+    StepVstHostAudioProcessor& processor;
+    juce::Label titleLabel;
+    juce::Label statusLabel;
+    juce::Label outputRoutingLabel;
+    juce::ComboBox outputRoutingBox;
+    juce::Label hostSlotsLabel;
+    std::array<juce::Label, 2> hostSlotLabels;
+    std::array<juce::TextButton, 2> hostSlotLoadButtons;
+    std::array<juce::TextButton, 2> hostSlotOpenButtons;
+    std::array<juce::TextButton, 2> hostSlotRemoveButtons;
+    std::array<std::unique_ptr<juce::DocumentWindow>, 2> hostSlotEditorWindows;
+    juce::TextButton hostSaveDefaultsButton;
+    juce::Label hostStatusLabel;
+    juce::Label masterVolumeLabel;
+    juce::Slider masterVolumeSlider;
+    juce::Slider masterMeterSlider;
+    std::array<juce::Label, 6> meterScaleLabels;
+    std::array<juce::Colour, StepVstHostAudioProcessor::BeatSpaceChannels> laneColours;
+    std::array<StripControl::ColoredKnobLookAndFeel, StepVstHostAudioProcessor::BeatSpaceChannels> panLookAndFeels;
+    std::array<juce::Label, StepVstHostAudioProcessor::BeatSpaceChannels> laneLabels;
+    std::array<juce::Label, StepVstHostAudioProcessor::BeatSpaceChannels> outPairLabels;
+    std::array<juce::TextButton, StepVstHostAudioProcessor::BeatSpaceChannels> muteButtons;
+    std::array<juce::TextButton, StepVstHostAudioProcessor::BeatSpaceChannels> soloButtons;
+    std::array<juce::Slider, StepVstHostAudioProcessor::BeatSpaceChannels> meterSliders;
+    std::array<juce::Slider, StepVstHostAudioProcessor::BeatSpaceChannels> volumeSliders;
+    std::array<juce::Slider, StepVstHostAudioProcessor::BeatSpaceChannels> panSliders;
+    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>,
+               StepVstHostAudioProcessor::BeatSpaceChannels> volumeAttachments;
+    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>,
+               StepVstHostAudioProcessor::BeatSpaceChannels> panAttachments;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> masterVolumeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> outputRoutingAttachment;
+    std::array<float, StepVstHostAudioProcessor::BeatSpaceChannels> meterDisplayValues{};
+    std::array<juce::File, 2> hostSlotFiles{};
+    bool mixUiReady = false;
+    bool suppressMixToggleCallbacks = false;
+    int refreshFrameCounter = 0;
+
+    void chooseHostedSlotFile(int slot);
+    void openHostedSlotGui(int slot);
+    void removeHostedSlotPlugin(int slot);
+    void closeHostedSlotGui(int slot);
+    void saveHostedSlotsAsDefault();
+    void refreshHostedSlotLabels();
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MixControlPanel)
 };
 
 //==============================================================================
@@ -1026,12 +1269,15 @@ private:
     std::unique_ptr<MonomeControlPanel> monomeControl;
     std::unique_ptr<GlobalControlPanel> globalControl;
     std::unique_ptr<BeatSpaceControlPanel> beatSpaceControl;
+    std::unique_ptr<MixControlPanel> mixControl;
+    std::unique_ptr<MacroControlPanel> macroControl;
     std::unique_ptr<MonomePagesPanel> monomePagesControl;
     std::unique_ptr<PresetControlPanel> presetControl;
     std::unique_ptr<PathsControlPanel> pathsControl;
     
     // Top controls in tabs (to save space)
     std::unique_ptr<juce::TabbedComponent> topTabs;
+    int lastTopTabIndex = -1;
     
     // Main unified tabs: Play / FX
     std::unique_ptr<juce::TabbedComponent> mainTabs;
@@ -1045,6 +1291,13 @@ private:
     // Layout components
     juce::Viewport stripsViewport;
     juce::Component stripsContainer;
+    juce::Component globalStepToolBar;
+    juce::Label globalStepToolLabel;
+    juce::Label globalStepPatchTabLabel;
+    static constexpr int GlobalStepPatchTabCount = 4;
+    std::array<juce::TextButton, GlobalStepPatchTabCount> globalStepPatchTabButtons;
+    static constexpr int GlobalStepToolButtonCount = 6;
+    std::array<juce::TextButton, GlobalStepToolButtonCount> globalStepToolButtons;
     
     // Look and Feel
     EditorLookAndFeel darkLookAndFeel;
@@ -1052,12 +1305,26 @@ private:
     bool tooltipsEnabled = true;
     uint32_t lastPresetRefreshToken = 0;
     int activeGuiStripCount = 6;
+    StepSequencerDisplay::EditTool globalStepTool = StepSequencerDisplay::EditTool::Volume;
+    int globalStepPatchTabIndex = 0;
+    bool suppressGlobalStepToolChange = false;
+    bool suppressGlobalStepPatchTabChange = false;
+    bool lastModulationLaneViewActive = false;
 
     int getDetectedGuiStripCount() const;
     void setActiveGuiStripCount(int stripCount, bool forceRelayout);
     void createUIComponents();
     void setupLookAndFeel();
     void layoutComponents();
+    void setupGlobalStepToolControls(juce::Component& parent);
+    void layoutGlobalStepToolControls();
+    void applyGlobalStepToolToAllStrips();
+    void applyGlobalStepPatchTabToAllStrips();
+    void setGlobalStepTool(StepSequencerDisplay::EditTool tool, bool updateComboBox, bool applyToStrips);
+    void setGlobalStepPatchTab(int tabIndex, bool updateButtons, bool applyToStrips);
+    static StepSequencerDisplay::EditTool stepToolFromComboId(int comboId);
+    static int comboIdFromStepTool(StepSequencerDisplay::EditTool tool);
+    static StepSequencerDisplay::EditTool stepToolFromProcessorIndex(int toolIndex);
     void setTooltipsEnabled(bool enabled);
     
     static constexpr int windowWidth = 1000;

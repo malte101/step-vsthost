@@ -112,22 +112,6 @@ int stepLengthStepsFromColumn(int x)
     return kStepLengthStepsByColumn[static_cast<size_t>(juce::jlimit(0, 15, x))];
 }
 
-int findNearestStepLengthColumn(int steps)
-{
-    int bestCol = 0;
-    int bestDistance = std::abs(steps - kStepLengthStepsByColumn[0]);
-    for (int i = 1; i < 16; ++i)
-    {
-        const int dist = std::abs(steps - kStepLengthStepsByColumn[static_cast<size_t>(i)]);
-        if (dist < bestDistance)
-        {
-            bestDistance = dist;
-            bestCol = i;
-        }
-    }
-    return bestCol;
-}
-
 float getStripParameterValue(const StepVstHostAudioProcessor& processor,
                              int stripIndex,
                              const juce::String& prefix,
@@ -291,33 +275,17 @@ void renderRow(const EnhancedAudioStrip& strip,
     }
     else if (mode == lengthMode)
     {
-        if (isStepMode)
+        const int loopStart = juce::jlimit(0, 15, strip.getLoopStart());
+        const int loopEnd = juce::jlimit(loopStart + 1, 16, strip.getLoopEnd());
+        for (int x = 0; x < 16; ++x)
         {
-            const int activeCol = findNearestStepLengthColumn(strip.getStepPatternLengthSteps());
-            for (int x = 0; x < 16; ++x)
-            {
-                if (x == activeCol)
-                    newLedState[x][y] = 15;
-                else if (x <= activeCol)
-                    newLedState[x][y] = 8;
-                else
-                    newLedState[x][y] = 2;
-            }
+            if (x >= loopStart && x < loopEnd)
+                newLedState[x][y] = 10;
+            else
+                newLedState[x][y] = 2;
         }
-        else
-        {
-            const int loopStart = juce::jlimit(0, 15, strip.getLoopStart());
-            const int loopEnd = juce::jlimit(loopStart + 1, 16, strip.getLoopEnd());
-            for (int x = 0; x < 16; ++x)
-            {
-                if (x >= loopStart && x < loopEnd)
-                    newLedState[x][y] = 10;
-                else
-                    newLedState[x][y] = 2;
-            }
-            newLedState[loopStart][y] = 15;
-            newLedState[juce::jmax(loopStart, loopEnd - 1)][y] = 13;
-        }
+        newLedState[loopStart][y] = 15;
+        newLedState[juce::jmax(loopStart, loopEnd - 1)][y] = 13;
     }
     else if (mode == swingMode)
     {

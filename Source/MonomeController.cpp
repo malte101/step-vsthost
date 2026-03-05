@@ -107,6 +107,11 @@ void StepVstHostAudioProcessor::setMomentaryStutterHold(bool shouldEnable)
     if (!audioEngine)
         return;
 
+    auto quantizeDivisionForStutterEntry = [this](double /*entryDivisionBeats*/) -> int
+    {
+        return juce::jmax(1, getQuantizeDivision());
+    };
+
     const bool startPending = (pendingStutterStartActive.load(std::memory_order_acquire) != 0);
     const bool playbackActive = (momentaryStutterPlaybackActive.load(std::memory_order_acquire) != 0);
     if (!shouldEnable && !momentaryStutterHoldActive && !startPending && !playbackActive)
@@ -135,9 +140,9 @@ void StepVstHostAudioProcessor::setMomentaryStutterHold(bool shouldEnable)
         pendingStutterReleaseActive.store(0, std::memory_order_release);
         pendingStutterReleasePpq.store(-1.0, std::memory_order_release);
         pendingStutterReleaseSampleTarget.store(-1, std::memory_order_release);
-        const int startQuantizeDivision = juce::jmax(1, getQuantizeDivision());
-        pendingStutterStartQuantizeDivision.store(startQuantizeDivision, std::memory_order_release);
         const double entryDivision = juce::jlimit(0.03125, 4.0, momentaryStutterDivisionBeats);
+        const int startQuantizeDivision = quantizeDivisionForStutterEntry(entryDivision);
+        pendingStutterStartQuantizeDivision.store(startQuantizeDivision, std::memory_order_release);
         pendingStutterStartDivisionBeats.store(entryDivision, std::memory_order_release);
         audioEngine->setMomentaryStutterDivision(entryDivision);
 
@@ -177,25 +182,38 @@ void StepVstHostAudioProcessor::setMomentaryStutterHold(bool shouldEnable)
         juce::ignoreUnused(tempoNow);
         if (!(std::isfinite(currentPpq) && currentPpq >= 0.0))
         {
-            // Strict PPQ safety: no valid timeline means no stutter scheduling.
-            momentaryStutterHoldActive = false;
+            // Host PPQ can be briefly unavailable during transport transitions.
+            // Fall back to immediate engine-timeline start instead of dropping stutter.
+            const double fallbackPpq = audioEngine->getTimelineBeat();
+            if (!std::isfinite(fallbackPpq))
+            {
+                momentaryStutterHoldActive = false;
+                pendingStutterStartActive.store(0, std::memory_order_release);
+                pendingStutterStartPpq.store(-1.0, std::memory_order_release);
+                pendingStutterStartSampleTarget.store(-1, std::memory_order_release);
+                momentaryStutterPlaybackActive.store(0, std::memory_order_release);
+                audioEngine->setMomentaryStutterActive(false);
+                return;
+            }
+
+            const double entryDivision = juce::jlimit(0.03125, 4.0, momentaryStutterDivisionBeats);
+            pendingStutterStartDivisionBeats.store(entryDivision, std::memory_order_release);
             pendingStutterStartActive.store(0, std::memory_order_release);
             pendingStutterStartPpq.store(-1.0, std::memory_order_release);
             pendingStutterStartSampleTarget.store(-1, std::memory_order_release);
-            momentaryStutterPlaybackActive.store(0, std::memory_order_release);
-            audioEngine->setMomentaryStutterActive(false);
+            performMomentaryStutterStartNow(fallbackPpq, nowSample);
             return;
         }
 
         const double entryDivision = juce::jlimit(0.03125, 4.0, momentaryStutterDivisionBeats);
-        const int startQuantizeDivision = juce::jmax(1, getQuantizeDivision());
+        const int startQuantizeDivision = quantizeDivisionForStutterEntry(entryDivision);
         pendingStutterStartQuantizeDivision.store(startQuantizeDivision, std::memory_order_release);
         pendingStutterStartDivisionBeats.store(entryDivision, std::memory_order_release);
-        pendingStutterStartPpq.store(std::numeric_limits<double>::quiet_NaN(), std::memory_order_release);
+        // Stutter must begin from the current playmarker immediately on hold-down.
+        pendingStutterStartPpq.store(-1.0, std::memory_order_release);
         pendingStutterStartSampleTarget.store(-1, std::memory_order_release);
-        pendingStutterStartActive.store(1, std::memory_order_release);
-        momentaryStutterPlaybackActive.store(0, std::memory_order_release);
-        audioEngine->setMomentaryStutterActive(false);
+        pendingStutterStartActive.store(0, std::memory_order_release);
+        performMomentaryStutterStartNow(currentPpq, nowSample);
         return;
     }
 
@@ -287,6 +305,7 @@ void StepVstHostAudioProcessor::performMomentaryStutterStartNow(double hostPpqNo
 
     const double entryDivision = juce::jlimit(
         0.03125, 4.0, pendingStutterStartDivisionBeats.load(std::memory_order_acquire));
+    const double triggerTempo = juce::jmax(1.0, audioEngine->getCurrentTempo());
     momentaryStutterMacroStartPpq = entryPpq;
     momentaryStutterLastComboMask = 0;
     momentaryStutterTwoButtonStepBaseValid = false;
@@ -302,8 +321,8 @@ void StepVstHostAudioProcessor::performMomentaryStutterStartNow(double hostPpqNo
         const auto idx = static_cast<size_t>(i);
         momentaryStutterStripArmed[idx] = false;
         const bool stepMode = (strip && strip->getPlayMode() == EnhancedAudioStrip::PlayMode::Step);
-        const bool hasStepAudio = stepMode && strip->getStepSampler() && strip->getStepSampler()->getHasAudio();
-        const bool hasPlayableContent = (strip && (stepMode || strip->hasAudio() || hasStepAudio));
+        const bool hasStepAudio = strip && strip->getStepSampler() && strip->getStepSampler()->getHasAudio();
+        const bool hasPlayableContent = (strip && (strip->hasAudio() || hasStepAudio));
         if (!strip || !hasPlayableContent)
         {
             audioEngine->setMomentaryStutterStrip(i, 0, 0.0, false);
@@ -323,6 +342,23 @@ void StepVstHostAudioProcessor::performMomentaryStutterStartNow(double hostPpqNo
         const double stutterOffsetRatio = strip->getStutterEntryOffsetRatio();
         audioEngine->setMomentaryStutterStrip(i, stutterColumn, stutterOffsetRatio, true);
         audioEngine->clearPendingQuantizedTriggersForStrip(i);
+        if (stepMode)
+        {
+            strip->retriggerStepVoiceAtColumn(stutterColumn, true);
+        }
+        else
+        {
+            audioEngine->enforceGroupExclusivity(i, false);
+            juce::AudioPlayHead::PositionInfo stutterPosInfo;
+            stutterPosInfo.setPpqPosition(entryPpq);
+            stutterPosInfo.setBpm(triggerTempo);
+            strip->triggerAtSample(stutterColumn,
+                                   triggerTempo,
+                                   nowSample,
+                                   stutterPosInfo,
+                                   true,
+                                   stutterOffsetRatio);
+        }
         momentaryStutterStripArmed[idx] = true;
     }
     audioEngine->setMomentaryStutterActive(true);
@@ -416,10 +452,12 @@ void StepVstHostAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
             return false;
         if (!controlModeActive)
             return true;
-        return currentControlMode != ControlMode::BeatSpace
-            && currentControlMode != ControlMode::Filter
-            && currentControlMode != ControlMode::Modulation;
+        // Keep modulation top-row controls dedicated to mod editing/page nav.
+        return currentControlMode != ControlMode::Modulation;
     };
+    const bool beatSpaceTopRowOwnsColumn8 =
+        controlModeActive && currentControlMode == ControlMode::BeatSpace;
+    const bool allowTopRowScratch = canUseTopRowStutter() && !beatSpaceTopRowOwnsColumn8;
     
     static int loopSetFirstButton = -1;
     static int loopSetStrip = -1;
@@ -588,14 +626,51 @@ void StepVstHostAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                     }
                     pendingSubPresetApplyMainPreset.store(-1, std::memory_order_release);
                     pendingSubPresetApplySlot.store(-1, std::memory_order_release);
+                    pendingSubPresetApplyTargetPpq.store(-1.0, std::memory_order_release);
+                    pendingSubPresetApplyTargetTempo.store(120.0, std::memory_order_release);
+                    pendingSubPresetApplyTargetSample.store(-1, std::memory_order_release);
                     requestSubPresetRecallQuantized(mainPresetIndex, subSlot, false);
                 }
                 else
                 {
-                    if (std::find(subPresetSequenceSlots.begin(), subPresetSequenceSlots.end(), subSlot)
-                        == subPresetSequenceSlots.end())
+                    auto resolveSequenceAnchor = [&]() -> int
                     {
-                        subPresetSequenceSlots.push_back(subSlot);
+                        // Prefer the oldest held pad as anchor (the one being held down).
+                        int anchor = -1;
+                        uint32_t longestHeldMs = 0;
+                        for (int i = 0; i < SubPresetSlots; ++i)
+                        {
+                            if (i == subSlot)
+                                continue;
+                            const auto idx = static_cast<size_t>(i);
+                            if (!subPresetPadHeld[idx])
+                                continue;
+
+                            const uint32_t heldMs = nowMs - subPresetPadPressStartMs[idx];
+                            if (anchor < 0 || heldMs > longestHeldMs)
+                            {
+                                anchor = i;
+                                longestHeldMs = heldMs;
+                            }
+                        }
+
+                        if (anchor >= 0)
+                            return anchor;
+
+                        if (!subPresetSequenceSlots.empty())
+                            return juce::jlimit(0, SubPresetSlots - 1, subPresetSequenceSlots.front());
+
+                        return subSlot;
+                    };
+
+                    const int anchorSlot = resolveSequenceAnchor();
+                    subPresetSequenceSlots.clear();
+                    const int step = (subSlot >= anchorSlot) ? 1 : -1;
+                    for (int slot = anchorSlot;; slot += step)
+                    {
+                        subPresetSequenceSlots.push_back(juce::jlimit(0, SubPresetSlots - 1, slot));
+                        if (slot == subSlot)
+                            break;
                     }
 
                     if (subPresetSequenceSlots.size() >= 2)
@@ -735,43 +810,43 @@ void StepVstHostAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                     updateMonomeLEDs();
                     return;
                 }
-                if (x == 9)
+                if (x == 9 && !canUseTopRowStutter())
                 {
                     beatSpaceRandomizeSelection();
                     updateMonomeLEDs();
                     return;
                 }
-                if (x == 10)
+                if (x == 10 && !canUseTopRowStutter())
                 {
                     beatSpaceAdjustZoom(-1);
                     updateMonomeLEDs();
                     return;
                 }
-                if (x == 11)
+                if (x == 11 && !canUseTopRowStutter())
                 {
                     beatSpaceAdjustZoom(1);
                     updateMonomeLEDs();
                     return;
                 }
-                if (x == 12)
+                if (x == 12 && !canUseTopRowStutter())
                 {
                     beatSpacePan(-1, 0);
                     updateMonomeLEDs();
                     return;
                 }
-                if (x == 13)
+                if (x == 13 && !canUseTopRowStutter())
                 {
                     beatSpacePan(1, 0);
                     updateMonomeLEDs();
                     return;
                 }
-                if (x == 14)
+                if (x == 14 && !canUseTopRowStutter())
                 {
                     beatSpacePan(0, -1);
                     updateMonomeLEDs();
                     return;
                 }
-                if (x == 15)
+                if (x == 15 && !canUseTopRowStutter())
                 {
                     beatSpacePan(0, 1);
                     updateMonomeLEDs();
@@ -798,7 +873,7 @@ void StepVstHostAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
             }
 
             // Row 0 col 8: original momentary scratch hold.
-            if (x == 8 && canUseTopRowStutter())
+            if (x == 8 && allowTopRowScratch)
             {
                 setMomentaryScratchHold(true);
                 updateMonomeLEDs();
@@ -806,7 +881,7 @@ void StepVstHostAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
             }
 
             // Row 0, cols 9-15: momentary stutter rates (timeline-synced):
-            // 9=1/4 ... 15=1/64.
+            // 9=1/2, 10=1/4, 11=1/8, 12=1/16, 13=1/32, 14=1/64, 15=1/128.
             if (x >= 9 && x <= 15 && canUseTopRowStutter())
             {
                 const uint8_t bit = stutterButtonBitForColumn(x);
@@ -1227,9 +1302,9 @@ void StepVstHostAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                     return;
                 }
                 
-                // Loop length setting mode - ONLY if scratch is disabled and strip is not in Step mode.
-                if (strip->getPlayMode() != EnhancedAudioStrip::PlayMode::Step
-                    && loopSetFirstButton >= 0
+                // Loop length setting mode while scratch is disabled:
+                // hold first column, then press second column to define range.
+                if (loopSetFirstButton >= 0
                     && loopSetStrip == stripIndex
                     && strip->isButtonHeld(loopSetFirstButton)
                     && strip->getScratchAmount() == 0.0f)
@@ -1242,7 +1317,7 @@ void StepVstHostAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                     int end = MaxColumns;
                     computeTwoButtonLoopRange(firstButton, secondButton, shouldReverse, start, end);
                     
-                    queueLoopChange(stripIndex, false, start, end, shouldReverse);
+                    queueLoopChange(stripIndex, false, start, end, shouldReverse, firstButton);
                     
                     DBG("Inner loop set: " << start << "-" << end << 
                         (shouldReverse ? " (REVERSE)" : " (NORMAL)"));
@@ -1272,31 +1347,24 @@ void StepVstHostAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                     else if (currentControlMode == ControlMode::Length)
                     {
                         const int clampedColumn = juce::jlimit(0, MaxColumns - 1, x);
-                        if (strip->getPlayMode() != EnhancedAudioStrip::PlayMode::Step)
+                        // Two-button loop-set gesture in Length mode:
+                        // press/hold first column, then press second to define range.
+                        if (loopSetFirstButton >= 0 && loopSetStrip == stripIndex)
                         {
-                            // Two-button loop-set gesture in Length mode for non-step strips:
-                            // press/hold first column, then press second to define range.
-                            if (loopSetFirstButton >= 0 && loopSetStrip == stripIndex)
-                            {
-                                const int firstButton = juce::jlimit(0, MaxColumns - 1, loopSetFirstButton);
-                                const int secondButton = clampedColumn;
-                                const bool shouldReverse = (firstButton > secondButton);
-                                int start = 0;
-                                int end = MaxColumns;
-                                computeTwoButtonLoopRange(firstButton, secondButton, shouldReverse, start, end);
-                                queueLoopChange(stripIndex, false, start, end, shouldReverse);
-                                loopSetFirstButton = -1;
-                                loopSetStrip = -1;
-                            }
-                            else
-                            {
-                                loopSetFirstButton = clampedColumn;
-                                loopSetStrip = stripIndex;
-                            }
+                            const int firstButton = juce::jlimit(0, MaxColumns - 1, loopSetFirstButton);
+                            const int secondButton = clampedColumn;
+                            const bool shouldReverse = (firstButton > secondButton);
+                            int start = 0;
+                            int end = MaxColumns;
+                            computeTwoButtonLoopRange(firstButton, secondButton, shouldReverse, start, end);
+                            queueLoopChange(stripIndex, false, start, end, shouldReverse, firstButton);
+                            loopSetFirstButton = -1;
+                            loopSetStrip = -1;
                         }
                         else
                         {
-                            MonomeMixActions::handleButtonPress(*this, *strip, stripIndex, x, static_cast<int>(currentControlMode));
+                            loopSetFirstButton = clampedColumn;
+                            loopSetStrip = stripIndex;
                         }
                     }
                     else if (currentControlMode == ControlMode::Swing)
@@ -1401,6 +1469,9 @@ void StepVstHostAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
                     pendingSubPresetRecall.sequenceDriven = false;
                     pendingSubPresetApplyMainPreset.store(-1, std::memory_order_release);
                     pendingSubPresetApplySlot.store(-1, std::memory_order_release);
+                    pendingSubPresetApplyTargetPpq.store(-1.0, std::memory_order_release);
+                    pendingSubPresetApplyTargetTempo.store(120.0, std::memory_order_release);
+                    pendingSubPresetApplyTargetSample.store(-1, std::memory_order_release);
                 }
             }
 
@@ -1456,7 +1527,7 @@ void StepVstHostAudioProcessor::handleMonomeKeyPress(int x, int y, int state)
         }
 
         if (y == GROUP_ROW && x == 8
-            && (canUseTopRowStutter() || momentaryScratchHoldActive))
+            && (allowTopRowScratch || momentaryScratchHoldActive))
         {
             setMomentaryScratchHold(false);
             updateMonomeLEDs();
@@ -1591,11 +1662,11 @@ void StepVstHostAudioProcessor::updateMonomeLEDs()
     const int beatIndexInBar = juce::jmax(0, static_cast<int>(std::floor(beatNow)) % 4);
     const bool metroDownbeat = (beatIndexInBar == 0);
     const bool topRowStutterVisible = !controlModeActive
-        || (currentControlMode != ControlMode::BeatSpace
-            && currentControlMode != ControlMode::Filter
-            && currentControlMode != ControlMode::Modulation
+        || (currentControlMode != ControlMode::Modulation
             && currentControlMode != ControlMode::StepEdit
             && currentControlMode != ControlMode::Preset);
+    const bool topRowScratchVisible = topRowStutterVisible
+        && !(controlModeActive && currentControlMode == ControlMode::BeatSpace);
     const auto nowMs = juce::Time::getMillisecondCounter();
 
     if (controlModeActive && currentControlMode == ControlMode::FileBrowser)
@@ -1666,7 +1737,7 @@ void StepVstHostAudioProcessor::updateMonomeLEDs()
             }
         }
 
-        // First 4 top-row pads are bar-quantized sub-presets for the active main preset.
+        // First 4 top-row pads are quantized sub-presets for the active main preset.
         // They are independent from the normal 16x7 preset matrix and intentionally
         // override row-0 cols 0..3 visuals in preset mode.
         for (int subSlot = 0; subSlot < SubPresetSlots; ++subSlot)
@@ -1992,7 +2063,7 @@ void StepVstHostAudioProcessor::updateMonomeLEDs()
     }  // End else (normal mode)
 
     // Row 0 col 8: momentary scratch indicator.
-    if (topRowStutterVisible)
+    if (topRowScratchVisible)
         newLedState[8][GROUP_ROW] = momentaryScratchHoldActive ? 15 : 4;
 
     // Row 0, cols 9-15: momentary stutter division selectors.
