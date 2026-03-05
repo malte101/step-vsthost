@@ -4245,6 +4245,9 @@ void StepVstHostAudioProcessor::rebuildBeatSpaceColorClusters(
         clusterHotspotSum[static_cast<size_t>(c)] *= inv;
     }
 
+    std::array<int, kClusters> rawClusterToCategory{};
+    rawClusterToCategory.fill(-1);
+
     std::array<bool, kClusters> clusterUsed{};
     clusterUsed.fill(false);
     for (int category = 0; category < BeatSpaceChannels; ++category)
@@ -4281,10 +4284,48 @@ void StepVstHostAudioProcessor::rebuildBeatSpaceColorClusters(
 
         if (bestCluster >= 0)
         {
-            beatSpaceCategoryColorCluster[static_cast<size_t>(category)] = bestCluster;
+            rawClusterToCategory[static_cast<size_t>(bestCluster)] = category;
             clusterUsed[static_cast<size_t>(bestCluster)] = true;
         }
     }
+
+    // Keep KMeans region shapes, but normalize cluster IDs to category IDs
+    // so "cluster assignment = category" across overlay, constraints and UI.
+    for (int c = 0; c < kClusters; ++c)
+    {
+        if (clusterCounts[static_cast<size_t>(c)] <= 0
+            || rawClusterToCategory[static_cast<size_t>(c)] >= 0)
+        {
+            continue;
+        }
+
+        float bestScore = -1.0e9f;
+        int bestCategory = 0;
+        for (int category = 0; category < BeatSpaceChannels; ++category)
+        {
+            float score = scoreBeatSpaceCategoryPoint(category, clusterMeans[static_cast<size_t>(c)]);
+            score += 0.06f * clusterHotspotSum[static_cast<size_t>(c)];
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestCategory = category;
+            }
+        }
+        rawClusterToCategory[static_cast<size_t>(c)] =
+            juce::jlimit(0, BeatSpaceChannels - 1, bestCategory);
+    }
+
+    for (auto& cellCluster : beatSpaceColorClusters)
+    {
+        const int rawCluster = juce::jlimit(0, kClusters - 1, cellCluster);
+        const int mappedCategory = rawClusterToCategory[static_cast<size_t>(rawCluster)];
+        cellCluster = (mappedCategory >= 0)
+            ? mappedCategory
+            : rawCluster;
+    }
+
+    for (int category = 0; category < BeatSpaceChannels; ++category)
+        beatSpaceCategoryColorCluster[static_cast<size_t>(category)] = category;
 
     beatSpaceColorClustersReady = true;
 }
@@ -4321,10 +4362,7 @@ void StepVstHostAudioProcessor::rebuildBeatSpaceCategoryAnchors()
 
             if (beatSpaceColorClustersReady)
             {
-                const int tableIndex = (manualPoint.y * BeatSpaceTableSize) + manualPoint.x;
-                if (tableIndex >= 0 && tableIndex < static_cast<int>(beatSpaceColorClusters.size()))
-                    beatSpaceCategoryColorCluster[static_cast<size_t>(category)] =
-                        beatSpaceColorClusters[static_cast<size_t>(tableIndex)];
+                beatSpaceCategoryColorCluster[static_cast<size_t>(category)] = category;
             }
             continue;
         }
@@ -4422,14 +4460,9 @@ void StepVstHostAudioProcessor::rebuildBeatSpaceCategoryAnchors()
         for (int category = 0; category < BeatSpaceChannels; ++category)
         {
             int cluster = beatSpaceCategoryColorCluster[static_cast<size_t>(category)];
-            if (cluster < 0 && beatSpaceCategoryAnchorManual[static_cast<size_t>(category)])
-            {
-                const auto p = clampPoint(beatSpaceCategoryManualAnchors[static_cast<size_t>(category)]);
-                const int tableIndex = (p.y * BeatSpaceTableSize) + p.x;
-                if (tableIndex >= 0 && tableIndex < static_cast<int>(beatSpaceColorClusters.size()))
-                    cluster = beatSpaceColorClusters[static_cast<size_t>(tableIndex)];
-                beatSpaceCategoryColorCluster[static_cast<size_t>(category)] = cluster;
-            }
+            if (cluster < 0)
+                cluster = category;
+            beatSpaceCategoryColorCluster[static_cast<size_t>(category)] = cluster;
 
             if (cluster < 0)
                 continue;
